@@ -6,6 +6,20 @@ Non self hosters can visit the public instance at: (linkherewhenitislive)
 
 ---
 
+## Showcase
+
+<!-- Add poster screenshots below. Recommended: 3-4 per row, use GitHub-hosted images -->
+<!-- Example row format:
+<p align="center">
+  <img src="url-to-image-1" width="23%"/>
+  <img src="url-to-image-2" width="23%"/>
+  <img src="url-to-image-3" width="23%"/>
+  <img src="url-to-image-4" width="23%"/>
+</p>
+-->
+
+---
+
 ## Features
 
 - **Ratings overlay** — weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, and more. Three display modes: accent bar, numeric, and minimalist.

@@ -5,6 +5,15 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.env.example'
+      - '.devcontainer/**'
+      - 'discovery_overrides.example.json'
+      - '.github/**'
 
 jobs:
   build-and-push:
