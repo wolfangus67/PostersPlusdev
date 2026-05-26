@@ -11,13 +11,15 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
   <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-mode1.png?raw=true" width="23%"/>
   <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-mode2.png?raw=true" width="23%"/>
   <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-mode3.png?raw=true" width="23%"/>
-  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-4.png?raw=true" width="23%"/>
+  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase%204.png" width="23%"/>
 </p>
 <p align="center">
   Client featured is a slightly modified Stremio Kai by allecsc
 </p>
 <p align="center">
   <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai.png?raw=true" width="92%"/>
+  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai2.png" width="92%"/>
+  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai3.png?raw=true" width="92%"/>
 </p>
 </p>
 
@@ -25,13 +27,21 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 
 ## Features
 
-- **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, and more.
-- **Three display modes** - choose between a dynamic rating bar with text, pure text or minimalist which uses a small genre/year display with a dynamic rating separator based on the ratings.
-- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (drama, comedy, limited), festival winners, custom cast, trending, newly streaming and more. Priority order is fully configurable.
-- **Quality badges** - 4K, 1080p, Remux, Web, DV, HDR10+, HDR10 sourced from an AIOStreams integration.
-- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language-aware with English fallback.
-- **Web configurator** - easy to use browser-based UI to tune every parameter and generate a ready-to-paste URL template.
-- **Composite poster cache** - fully rendered posters are cached by config hash and served directly on repeat requests.
+- **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, and more. Three display modes (Score Bar, Clean, Minimalist), three colour palettes (Prestige, Dark/light, Light), and optional glow on high scores.
+
+- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, newly streaming (release-date recency plus r/movieleaks tracking), cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Optional Badge Style render with adjustable X/Y position.
+
+- **Quality badges** - five display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Age Rating Only, or hidden. Sourced from an AIOStreams integration and fetched in the background on first request.
+
+- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference falls back through requested → English → language-neutral. Optional Textless toggle skips the logo entirely for clients that render the title separately.
+
+- **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is centre-cropped to portrait; when no poster art exists at all, a genre-tinted gradient canvas is generated with the title text. 
+
+- **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Per-section info modals, URL import (paste any /poster URL to hydrate every control), persistent settings via localStorage, and a mobile-optimised expanded preview.
+
+- **Composite poster cache** - fully rendered posters are cached by config hash and served directly on repeat requests, with configurable TTL and max-entry cap.
+
+- **Operator overrides** - drop a discovery_overrides.json into the cache volume to replace or merge the built-in notable-studio / director / cast lists without editing source.
 
 ---
 
@@ -73,6 +83,7 @@ services:
       - TMDB_API_KEY=your_tmdb_key
       - MDBLIST_API_KEY=your_mdblist_key
       - WORKERS=2
+      - ACCESS_KEY=youraccesskey 
       # See .env.example for all available options
 ```
 
@@ -163,7 +174,7 @@ Sash priority order is configurable in the web configurator via drag-and-drop. I
 
 ## Ratings
 
-Scores from multiple providers are normalised to a 0–100 scale and combined using configurable weights. Default weights favour Letterboxd (80%) and Rotten Tomatoes (20%) for movies, and Trakt (80%) and Rotten Tomatoes (20%) for TV. Weights are fully adjustable in the web configurator.
+Scores from multiple providers are normalised to a 0–100 scale and combined using configurable weights. Default weights use Letterboxd with Trakt fallback for movies, and Trakt (80%) and Rotten Tomatoes (20%) for TV. Weights are fully adjustable in the web configurator.
 
 ---
 
@@ -181,6 +192,12 @@ PostersPlus uses a SQLite database (WAL mode) for all caching. The cache volume 
 | Quality badges (new) | 1 day |
 | Quality badges (older) | 90 days |
 | Composite posters | 7 days |
+
+---
+
+## Donate
+
+If you'd like to support development, I'd appreciate it: https://ko-fi.com/umbraprojects
 
 ---
 
