@@ -6,20 +6,27 @@ priority one to show, based on a caller-supplied ordered list.
 
 Priority slots
 --------------
-wins        Best Picture win / Emmy win
-pic_noms    Best Picture nomination (high selectivity — ~5-10 films/year)
-festival    Major international festival winner (Cannes, Berlin, Venice, Sundance, …)
-studio      Produced by a notable studio (A24, Pixar, …)
-director    Directed by a notable filmmaker
-cast        Stars a notable actor / actress
-metacritic  Metacritic Must-See badge (curated critical acclaim)
-cult        Cult Classic / Cult Film (MDblist keyword)
-trending    Currently trending on TMDB
-true_story  Based on a true story (MDblist keyword)
-foreign     Non-English original language film
-structural  Short Film | Mini Series | Binge Ready (whichever matches first)
-new_release Newly released (digital/premiere within the last 14 days)
-emmy_noms   Emmy nomination (broad — last resort)
+wins         Oscar Best Picture win / Major Emmy (Outstanding) Series win
+gg_wins      Golden Globe win (all top film + TV categories)
+festival     Major international festival winner (Cannes, Berlin, Venice, Sundance, …)
+pic_noms     Best Picture nomination (film) / Major Emmy nomination (TV)
+gg_noms      Golden Globe nomination (all top film + TV categories)
+studio       Produced by a notable studio (A24, Pixar, …)
+director     Directed by a notable filmmaker
+cast         Stars a notable actor / actress
+trending     Currently trending on TMDB
+cult         Cult Classic / Cult Film (MDblist keyword)
+foreign      Non-English original language film
+new_release  Newly released — digital/premiere within the last 14 days, or a
+             confirmed r/movieleaks digital-release post
+metacritic   Metacritic Must-See badge (curated critical acclaim)
+true_story   Based on a true story (MDblist keyword)
+structural   Short Film | Mini Series | Binge Ready (whichever matches first)
+
+Legacy aliases (still accepted in sash_priority for backward-compat with old URLs):
+    emmy_noms       → pic_noms
+    digital_release → new_release
+    noms            → any nomination (catch-all)
 
 All facts are stored in DiscoveryMeta so they only need to be computed once
 and can be re-prioritised at render time without re-fetching.

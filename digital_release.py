@@ -23,7 +23,9 @@ from config import DIGITAL_RELEASE_MAX_AGE_DAYS, DIGITAL_RELEASE_MIN_AGE_DAYS
 logger = logging.getLogger(__name__)
 
 _ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/posts/search"
-_IMDB_RE          = re.compile(r"tt\d+")
+# Match tt + 1-10 digits, with a negative lookahead so we don't grab the first
+# 10 chars of a longer numeric run (TMDB / IMDB IDs are at most 10 digits).
+_IMDB_RE          = re.compile(r"tt\d{1,10}(?!\d)")
 _LIMIT            = 100   # posts per page
 _MAX_PAGES        = 10    # hard cap — 1 000 posts covers 30 days of sub activity
 _POLL_INTERVAL    = 86400  # seconds (24 h)
@@ -79,7 +81,12 @@ async def sync_digital_releases(client: httpx.AsyncClient) -> int:
             break
 
         for post in posts:
-            posted_at = int(post.get("created_utc", 0))
+            created_utc = post.get("created_utc")
+            if not created_utc:
+                # No timestamp → can't decide age accurately. Skip rather than
+                # store with posted_at=0 (which would be pruned next sweep anyway).
+                continue
+            posted_at = int(created_utc)
             for imdb_id in _IMDB_RE.findall(post.get("selftext", "")):
                 entries.append((imdb_id, posted_at))
 

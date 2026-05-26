@@ -13,7 +13,6 @@ from config import (
     AIOSTREAMS_URL,
     BADGE_DIR,
     BADGE_FILES,
-    BADGE_GAP,
     BADGE_HEIGHT,
     QUALITY_LABELS,
 )
@@ -277,9 +276,6 @@ def render_badges_left(
     y_top: int,
     badge_height: int,
     badge_gap: int,
-    # variant parameter retained for call-site compatibility but is unused;
-    # we always render light badges against the darkened gradient.
-    variant: str = "light",
 ) -> None:
     if not items:
         return

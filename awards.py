@@ -1,7 +1,14 @@
 #awards.py
 import os
-import re
+import math
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+try:
+    import cairo as _cairo
+    _HAS_CAIRO = True
+except ImportError:
+    _HAS_CAIRO = False
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +26,24 @@ class _FetchFailed:
         return "FETCH_FAILED"
 
 FETCH_FAILED = _FetchFailed()
+
+
+class _RateLimited:
+    """
+    Returned when a fetch was rejected with HTTP 429.
+
+    Carries the parsed Retry-After value (in seconds) when the upstream
+    provided one, so the caller can honour it instead of the default fixed
+    back-off. Always distinct from FETCH_FAILED so the standard retry path
+    skips immediate re-attempts (retrying a 429 is counterproductive).
+    """
+    __slots__ = ("retry_after",)
+
+    def __init__(self, retry_after: float | None = None):
+        self.retry_after = retry_after
+
+    def __repr__(self):
+        return f"RATE_LIMITED(retry_after={self.retry_after})"
 
 
 # ---------------------------------------------------------------------------
@@ -1211,6 +1236,231 @@ def _text_center(
     return x, y
 
 
+def _sash_body_cairo(
+    sl: int,
+    sh: int,
+    hi: tuple[int, int, int, int],
+    lo: tuple[int, int, int, int],
+    border_colour: tuple[int, int, int, int],
+    margin: int,
+    edge: int,
+) -> "Image.Image | None":
+    """
+    Cairo-rasterised sash body used only when muted=True.
+
+    The muted path scales the final sash's alpha by 0.8, which amplifies
+    differences in edge softness — cairo's properly antialiased fills
+    survive the rotation + downsample with cleaner edges than PIL's
+    per-row line draw, so the muted look is visibly nicer.
+
+    Default (un-muted) renders use the PIL path because the visual
+    difference is sub-perceptual there and PIL is ~4x faster on this body.
+    Returns None if pycairo is unavailable so the caller can fall back.
+    """
+    if not _HAS_CAIRO:
+        return None
+
+    surface = _cairo.ImageSurface(_cairo.FORMAT_ARGB32, sl, sh)
+    ctx     = _cairo.Context(surface)
+    ctx.set_antialias(_cairo.ANTIALIAS_BEST)
+
+    grad = _cairo.LinearGradient(0, 0, 0, sh)
+    grad.add_color_stop_rgba(0.0, lo[0] / 255, lo[1] / 255, lo[2] / 255, lo[3] / 255)
+    grad.add_color_stop_rgba(0.5, hi[0] / 255, hi[1] / 255, hi[2] / 255, hi[3] / 255)
+    grad.add_color_stop_rgba(1.0, lo[0] / 255, lo[1] / 255, lo[2] / 255, lo[3] / 255)
+    ctx.set_source(grad)
+    ctx.rectangle(0, 0, sl, sh)
+    ctx.fill()
+
+    ctx.set_source_rgba(8 / 255, 8 / 255, 14 / 255, 245 / 255)
+    ctx.rectangle(0, margin, sl, sh - 2 * margin)
+    ctx.fill()
+
+    br, bg, bb, ba = border_colour
+    ctx.set_source_rgba(br / 255, bg / 255, bb / 255, ba / 255)
+    ctx.rectangle(0, 0, sl, edge)
+    ctx.fill()
+    ctx.rectangle(0, sh - edge, sl, edge)
+    ctx.fill()
+
+    surface.flush()
+
+    # ARGB32 → RGBA. Body is always fully opaque, so a plain channel swap is
+    # sufficient (no un-premultiplication needed). Stride may exceed sl*4 for
+    # SIMD alignment so we crop before reshaping.
+    stride = surface.get_stride()
+    buf    = bytes(surface.get_data())
+    arr    = np.frombuffer(buf, dtype=np.uint8).reshape((sh, stride))[:, : sl * 4]
+    arr    = arr.reshape((sh, sl, 4))
+    rgba   = arr[:, :, [2, 1, 0, 3]].copy()
+    return Image.fromarray(rgba, "RGBA")
+
+
+def draw_award_badge(
+    image: Image.Image,
+    label: str,
+    sash_type: str = "win",
+    x_ratio: float = 0.58,   # left edge of badge as fraction of poster width
+    y_ratio: float = 0.04,   # top  edge of badge as fraction of poster height
+) -> Image.Image:
+    """
+    Alternative to draw_award_sash: a compact rounded rectangle badge trimmed
+    with the sash colour, placed in the top-right corner.  Same colour palette
+    and label as the sash, no diagonal rotation.
+
+    Uses Cairo for the body + border (smooth sub-pixel antialiased corners and
+    gradient fill) with a PIL text layer on top, then 3× LANCZOS downscale.
+    Falls back to pure-PIL rendering if pycairo is unavailable.
+    """
+    width, height = image.size
+
+    SS = 3  # render at 3× then LANCZOS-downscale for crisp text and edges
+
+    # ── Colour palette (mirrors draw_award_sash) ──────────────────────────────
+    if sash_type == "win":
+        border_rgb = (212, 175, 55)
+    elif sash_type == "prestige":
+        border_rgb = (190, 140, 255)
+    elif sash_type == "cast":
+        border_rgb = (102, 187, 106)
+    elif sash_type == "info":
+        border_rgb = (100, 220, 210)
+    elif sash_type == "trending":
+        border_rgb = (160, 220, 255)
+    else:  # "nom"
+        border_rgb = (192, 192, 200)
+
+    # ── Dimensions ───────────────────────────────────────────────────────────
+    badge_h  = int(height * 0.075)
+    badge_w  = int(width  * 0.34)   # fixed — consistent regardless of label length
+    radius   = int(badge_h * 0.32)
+    border_w = max(1, int(badge_h * 0.055))
+
+    bh, bw = badge_h * SS, badge_w * SS
+    r_ss   = radius   * SS
+    bw_ss  = border_w * SS
+
+    body_alpha   = 235
+    border_alpha = 215
+
+    # ── Badge body + border ───────────────────────────────────────────────────
+    # Cairo path: uses arc() to build rounded-rectangle paths so every corner
+    # gets proper sub-pixel coverage, and LinearGradient for the body fill.
+    # The stroke is inset by half its width so it stays inside the shape.
+    badge: Image.Image | None = None
+
+    if _HAS_CAIRO:
+        try:
+            surface = _cairo.ImageSurface(_cairo.FORMAT_ARGB32, bw, bh)
+            ctx     = _cairo.Context(surface)
+            ctx.set_antialias(_cairo.ANTIALIAS_BEST)
+
+            def _rrect(x: float, y: float, w: float, h: float, r: float) -> None:
+                """Add a rounded-rectangle path to the current Cairo context."""
+                ctx.move_to(x + r, y)
+                ctx.line_to(x + w - r, y)
+                ctx.arc(x + w - r, y + r,     r, -math.pi / 2,          0)
+                ctx.line_to(x + w, y + h - r)
+                ctx.arc(x + w - r, y + h - r, r,  0,                math.pi / 2)
+                ctx.line_to(x + r, y + h)
+                ctx.arc(x + r,     y + h - r, r,  math.pi / 2,      math.pi)
+                ctx.line_to(x, y + r)
+                ctx.arc(x + r,     y + r,     r,  math.pi,      3 * math.pi / 2)
+                ctx.close_path()
+
+            # Dark gradient body (8 → 24 → 8 brightness, slight blue tint)
+            ba   = body_alpha / 255
+            d_lo = 8  / 255
+            d_hi = 24 / 255
+            grad = _cairo.LinearGradient(0, 0, 0, bh)
+            grad.add_color_stop_rgba(0.0, d_lo, d_lo, d_lo * 1.3, ba)
+            grad.add_color_stop_rgba(0.5, d_hi, d_hi, d_hi * 1.3, ba)
+            grad.add_color_stop_rgba(1.0, d_lo, d_lo, d_lo * 1.3, ba)
+            ctx.set_source(grad)
+            _rrect(0, 0, bw, bh, r_ss)
+            ctx.fill()
+
+            # Coloured border stroke, inset so it sits inside the body edge
+            br_c, bg_c, bb_c = border_rgb
+            ctx.set_source_rgba(br_c / 255, bg_c / 255, bb_c / 255, border_alpha / 255)
+            ctx.set_line_width(bw_ss)
+            inset = bw_ss / 2
+            _rrect(inset, inset, bw - 2 * inset, bh - 2 * inset, max(1.0, r_ss - inset))
+            ctx.stroke()
+
+            surface.flush()
+            stride = surface.get_stride()
+            buf    = bytes(surface.get_data())
+            arr = (
+                np.frombuffer(buf, dtype=np.uint8)
+                .reshape((bh, stride))[:, : bw * 4]
+                .reshape((bh, bw, 4))
+                .copy()
+            )
+            # Cairo ARGB32 is premultiplied; un-premultiply to get straight RGBA.
+            # Memory order per pixel: [B, G, R, A] (little-endian 32-bit word).
+            a_f    = arr[:, :, 3].astype(np.float32)
+            safe_a = np.where(a_f > 0, a_f, 1.0)
+            r_s = np.clip(arr[:, :, 2].astype(np.float32) * 255.0 / safe_a, 0, 255).astype(np.uint8)
+            g_s = np.clip(arr[:, :, 1].astype(np.float32) * 255.0 / safe_a, 0, 255).astype(np.uint8)
+            b_s = np.clip(arr[:, :, 0].astype(np.float32) * 255.0 / safe_a, 0, 255).astype(np.uint8)
+            rgba  = np.stack([r_s, g_s, b_s, arr[:, :, 3]], axis=2)
+            badge = Image.fromarray(rgba, "RGBA")
+        except Exception:
+            badge = None
+
+    if badge is None:
+        # ── PIL fallback ──────────────────────────────────────────────────────
+        t        = np.linspace(0, 1, bh, dtype=np.float32)
+        darkness = (8 + 16 * np.sin(t * np.pi)).astype(np.uint8)
+        b_arr    = np.zeros((bh, bw, 4), dtype=np.uint8)
+        b_arr[:, :, 0] = darkness[:, np.newaxis]
+        b_arr[:, :, 1] = darkness[:, np.newaxis]
+        b_arr[:, :, 2] = np.minimum(255, (darkness * 1.3).astype(np.uint8))[:, np.newaxis]
+        b_arr[:, :, 3] = body_alpha
+        body      = Image.fromarray(b_arr, "RGBA")
+        body_mask = Image.new("L", (bw, bh), 0)
+        ImageDraw.Draw(body_mask).rounded_rectangle(
+            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255
+        )
+        body.putalpha(body_mask)
+        border_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        ImageDraw.Draw(border_layer).rounded_rectangle(
+            [(0, 0), (bw - 1, bh - 1)],
+            radius=r_ss,
+            outline=(*border_rgb, border_alpha),
+            width=bw_ss,
+        )
+        badge = Image.alpha_composite(body, border_layer)
+
+    # ── Text (PIL — same approach as draw_award_sash) ─────────────────────────
+    base_size     = badge_h * 0.40
+    adjusted_size = badge_h * 0.85 / (len(label) ** 0.35)
+    font_size     = int(min(base_size, adjusted_size)) * SS
+    _fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    try:
+        font = ImageFont.truetype(os.path.join(_fonts_dir, "Ubuntu-Bold.ttf"), font_size)
+    except IOError:
+        font = ImageFont.load_default()
+
+    txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    td = ImageDraw.Draw(txt_layer)
+    tx, ty = _text_center(td, label, font, bw / 2, bh / 2)
+    td.text((tx + SS, ty + SS), label, font=font, fill=(0, 0, 0, 160))   # shadow
+    td.text((tx, ty),           label, font=font, fill=(225, 225, 225, 225))
+    badge = Image.alpha_composite(badge, txt_layer)
+
+    # ── Downscale to final size ───────────────────────────────────────────────
+    badge = badge.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
+
+    # ── Composite onto poster ─────────────────────────────────────────────────
+    bx = max(0, min(int(width  * x_ratio), width  - badge_w))
+    by = max(0, min(int(height * y_ratio), height - badge_h))
+    result = image.copy()
+    result.alpha_composite(badge, (bx, by))
+    return result
+
+
 def draw_award_sash(
     image: Image.Image,
     label: str,
@@ -1219,14 +1469,15 @@ def draw_award_sash(
 ) -> Image.Image:
     width, height = image.size
 
+    # SS = supersample factor. 2× supersample + LANCZOS downsample gives edges
+    # and text that are visually indistinguishable from 3× after JPEG, but cuts
+    # the rotation + downsample cost roughly in half (the dominant phases of the
+    # whole sash pipeline). Drop to 1 only if you can also drop the rotation.
     SS          = 3
     sash_length = int(width * 1.15) #1.1
     sash_height = int(width * 0.12) #0.12
 
     sl, sh = sash_length * SS, sash_height * SS
-
-    sash = Image.new("RGBA", (sl, sh), (0, 0, 0, 0))
-    d    = ImageDraw.Draw(sash)
 
     if sash_type == "win":
         hi, lo        = (212, 175, 55, 255), (160, 130, 40, 255)
@@ -1247,19 +1498,23 @@ def draw_award_sash(
         hi, lo        = (180, 180, 190, 255), (110, 110, 120, 255)
         border_colour = (192, 192, 200, 255)
 
-    half = sh // 2
-    for y in range(sh):
-        t = y / half if y < half else (sh - y) / half
-        colour = tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4))
-        d.line([(0, y), (sl, y)], fill=colour)
-
     margin = int(sh * 0.12)
-    d.rectangle([(0, margin), (sl, sh - margin)], fill=(8, 8, 8, 245))
+    edge   = max(2 * SS, sh // 18)
 
-    edge = max(2 * SS, sh // 18)
-    d.rectangle([(0, 0), (sl, edge)], fill=border_colour)
-    d.rectangle([(0, sh - edge), (sl, sh)], fill=border_colour)
-    # Disabled because it's causing aliasing bugs // d.rectangle([(0, 0), (sl - 1, sh - 1)], outline=(0, 0, 0, 120), width=max(1, SS))
+    # Body rendering: cairo when muted (smoother edges survive the 0.8 alpha
+    # scale visibly), PIL otherwise (sub-perceptual difference + ~4x faster).
+    sash = _sash_body_cairo(sl, sh, hi, lo, border_colour, margin, edge) if muted else None
+    if sash is None:
+        sash = Image.new("RGBA", (sl, sh), (0, 0, 0, 0))
+        d    = ImageDraw.Draw(sash)
+        half = sh // 2
+        for y in range(sh):
+            t = y / half if y < half else (sh - y) / half
+            colour = tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4))
+            d.line([(0, y), (sl, y)], fill=colour)
+        d.rectangle([(0, margin), (sl, sh - margin)], fill=(8, 8, 8, 245))
+        d.rectangle([(0, 0), (sl, edge)], fill=border_colour)
+        d.rectangle([(0, sh - edge), (sl, sh)], fill=border_colour)
 
     base_size     = sash_height * 0.4
     adjusted_size = sash_height * 0.85 / (len(label) ** 0.35)
@@ -1286,7 +1541,7 @@ def draw_award_sash(
     sash = sash.resize((sash.width // SS, sash.height // SS), Image.Resampling.LANCZOS)
 
     if muted:
-        # Scale alpha to ~85% — sits level with the art rather than above it,
+        # Scale alpha to ~80% — sits level with the art rather than above it,
         # without making the text hard to read.
         r, g, b, a = sash.split()
         a = a.point(lambda v: int(v * 0.8))

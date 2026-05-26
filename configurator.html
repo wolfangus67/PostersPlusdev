@@ -116,7 +116,8 @@
     text-transform: uppercase;
   }
 
-  .header-github {
+  .header-github,
+  .header-discord {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -133,8 +134,73 @@
        centred item down by half that value, landing it at the subtitle level. */
     margin-top: 11px;
   }
-  .header-github:hover { opacity: 1; color: var(--silver); }
-  .header-github svg { flex-shrink: 0; display: block; }
+  .header-github:hover,
+  .header-discord:hover { opacity: 1; color: var(--silver); }
+  .header-github svg,
+  .header-discord svg { flex-shrink: 0; display: block; }
+
+  /* Right-side cluster: what's-new chip + github link */
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+
+  /* What's new chip — same typographic treatment as the GitHub link.
+     Always visible so users can re-open the list; the dot only appears
+     when there are changes the user hasn't acknowledged. */
+  .header-whatsnew {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    padding: 0;
+    text-transform: uppercase;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.15s, color 0.15s;
+    margin-top: 11px;
+  }
+  .header-whatsnew:hover { opacity: 1; color: var(--silver); }
+  .header-whatsnew .whatsnew-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+    box-shadow: 0 0 6px var(--gold);
+    flex-shrink: 0;
+  }
+  .header-whatsnew[data-acked="true"] .whatsnew-dot { display: none; }
+
+  .whatsnew-list {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+  .whatsnew-list li {
+    list-style: none;
+    padding-left: 14px;
+    position: relative;
+  }
+  .whatsnew-list li::before {
+    content: "+";
+    position: absolute;
+    left: 0;
+    color: var(--gold);
+    font-weight: bold;
+  }
 
   .status-bar {
     display: flex;
@@ -1043,6 +1109,114 @@
     justify-content: flex-end;
   }
 
+  /* Per-section info button */
+  .section-info-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 5px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+    opacity: 0.55;
+  }
+  .section-info-btn:hover { color: var(--silver); opacity: 1; }
+
+  /* Info modal */
+  .info-modal-box {
+    background: var(--black2);
+    border: 1px solid var(--border);
+    padding: 0;
+    width: 100%;
+    max-width: 540px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .info-modal-header {
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .info-modal-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--silver);
+  }
+  .info-modal-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+    transition: color 0.15s;
+  }
+  .info-modal-close:hover { color: var(--text-primary); }
+  .info-modal-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 20px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .info-section-title {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold-dim);
+    margin-bottom: 8px;
+  }
+  .info-section p, .info-section li {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+  .info-section ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .info-section li::before {
+    content: '—';
+    color: var(--text-muted);
+    margin-right: 7px;
+  }
+  .info-kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+  }
+  .info-kv dt {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--silver-dim);
+    white-space: nowrap;
+  }
+  .info-kv dd {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+  @media (max-width: 600px) {
+    .info-modal-box { max-height: 90vh; max-width: 100%; }
+    .info-modal-body { padding: 16px 18px 20px; }
+  }
+
   .log-line {
     font-size: 9px;
     color: var(--text-muted);
@@ -1092,7 +1266,30 @@
     .preview-poster { width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
     .header { flex-direction: row; align-items: center; }
     .logo-sep, .logo-sub { display: none; }
-    .header-github { opacity: 0.6; margin-top: 0; }
+    .header-github,
+    .header-discord,
+    .header-whatsnew { opacity: 0.6; margin-top: 0; }
+
+    /* Mobile header right cluster: icons only — there isn't room for the
+       text labels next to a half-width preview poster. */
+    .github-label,
+    .discord-label,
+    .whatsnew-label { display: none; }
+
+    /* The dot IS the whole indicator on mobile (no label backing it), so it's
+       always visible and slightly larger to balance the icons next to it.
+       Grey when nothing's new, gold when there is. The first selector beats
+       the desktop "hide when acked" rule by matching the same specificity. */
+    .header-whatsnew[data-acked="true"] .whatsnew-dot,
+    .header-whatsnew .whatsnew-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+    }
+    .header-whatsnew[data-acked="true"] .whatsnew-dot {
+      background: var(--text-muted);
+      box-shadow: none;
+    }
     .two-col, .inline-grid { grid-template-columns: 1fr; }
     .weight-item { grid-template-columns: 96px 1fr 38px; column-gap: 8px; }
     .btn-row { flex-wrap: wrap; }
@@ -1197,12 +1394,25 @@
         <span class="logo"><em>Posters</em>+</span>
       </div>
     </div>
-    <a class="header-github" href="https://github.com/UmbraProjects/PostersPlus" target="_blank" rel="noopener">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-      </svg>
-      <span class="github-label">GitHub</span>
-    </a>
+    <div class="header-right">
+      <button type="button" class="header-whatsnew" id="whatsnew-chip" onclick="openWhatsNew()" data-acked="true" aria-label="What's new">
+        <span class="whatsnew-dot"></span>
+        <span class="whatsnew-label">What's new</span>
+      </button>
+      <!-- Placeholder Discord URL — operators (e.g. ElfHosted) can point this at their own community link. -->
+      <a class="header-discord" href="https://discord.gg/postersplus" target="_blank" rel="noopener">
+        <svg width="18" height="14" viewBox="0 0 256 199" fill="currentColor" aria-hidden="true">
+          <path d="M216.856 16.597A208.5 208.5 0 0 0 164.042 0c-2.275 4.113-4.933 9.646-6.766 14.046a193.6 193.6 0 0 0-58.533 0C96.911 9.646 94.193 4.113 91.897 0a207.6 207.6 0 0 0-52.855 16.638C5.618 67.146-3.443 116.401 1.087 164.956a209.7 209.7 0 0 0 64.775 33.193 156 156 0 0 0 13.873-22.848 138 138 0 0 1-21.847-10.633 113 113 0 0 0 5.355-4.236c42.122 19.702 87.89 19.702 129.509 0a113 113 0 0 0 5.356 4.236 138.5 138.5 0 0 1-21.887 10.654 156 156 0 0 0 13.873 22.848 209 209 0 0 0 64.815-33.214c5.316-56.288-9.08-105.09-38.053-148.359M85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18m85.051 0c-12.645 0-23.015-11.805-23.015-26.18s10.148-26.2 23.015-26.2c12.866 0 23.236 11.804 23.015 26.2 0 14.375-10.149 26.18-23.015 26.18"/>
+        </svg>
+        <span class="discord-label">Discord</span>
+      </a>
+      <a class="header-github" href="https://github.com/UmbraProjects/PostersPlus" target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        <span class="github-label">GitHub</span>
+      </a>
+    </div>
   </header>
 
   <div class="main-layout">
@@ -1212,7 +1422,7 @@
       <div class="notch"></div>
       <div class="panel-header">
         <span class="panel-title">Configuration</span>
-        <span class="panel-index">V1.0</span>
+        <span class="panel-index">v1.0.0</span>
       </div>
       <div class="panel-body">
 
@@ -1224,6 +1434,7 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Core Config</span>
+            <button class="section-info-btn" onclick="openInfoModal('core');event.stopPropagation()" title="About Core Config">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1335,25 +1546,26 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating / Genre Label</span>
+            <button class="section-info-btn" onclick="openInfoModal('rating');event.stopPropagation()" title="About Rating / Genre Label">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
             <div class="field">
               <label class="field-label">Display Mode</label>
               <select id="cfg-rating-mode" onchange="updateRatingFields(); build(); queuePreviewReload()">
-                <option value="0">0. Hidden</option>
-                <option value="1" selected>1. Score Bar</option>
-                <option value="2">2. Clean</option>
-                <option value="3">3. Minimalist</option>
+                <option value="0">Hidden</option>
+                <option value="1" selected>Score Bar</option>
+                <option value="2">Clean</option>
+                <option value="3">Minimalist</option>
               </select>
             </div>
             <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
               <div class="field">
                 <label class="field-label">Colour Palette</label>
                 <select id="cfg-score-color-mode" onchange="build(); queuePreviewReload()">
-                  <option value="0">Default - red, yellow, green, purple</option>
-                  <option value="1">Dark/light - red, yellow, green</option>
-                  <option value="2">Metal - grey, bronze, silver, gold</option>
+                  <option value="2" selected>Prestige</option>
+                  <option value="0">Light</option>
+                  <option value="1">Dark/light</option>
                 </select>
               </div>
             </div>
@@ -1443,6 +1655,7 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Logo</span>
+            <button class="section-info-btn" onclick="openInfoModal('logo');event.stopPropagation()" title="About Logo">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1484,10 +1697,11 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Info Sash</span>
+            <button class="section-info-btn" onclick="openInfoModal('sash');event.stopPropagation()" title="About Info Sash">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
-            <div class="toggle-row" style="margin-bottom:14px;">
+            <div class="toggle-row">
               <div>
                 <div class="toggle-label">Show Informational Sashes</div>
               </div>
@@ -1496,7 +1710,7 @@
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
-            <div class="toggle-row" style="margin-bottom:14px;">
+            <div class="toggle-row" id="sash-muted-row">
               <div>
                 <div class="toggle-label">Muted Sashes</div>
                 <div class="field-hint">Reduce sash opacity slightly.</div>
@@ -1505,6 +1719,34 @@
                 <input type="checkbox" id="tog-muted" onchange="build(); queuePreviewReload()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
+            </div>
+            <div class="toggle-row" style="margin-bottom:14px;">
+              <div>
+                <div class="toggle-label">Badge Style</div>
+                <div class="field-hint">Render as a badge instead of a diagonal sash.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-sash-badge" onchange="updateSashBadgeFields(); build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <!-- Badge position — only shown when Badge Style is ON -->
+            <div id="sash-badge-offsets" style="display:none; margin-bottom:14px;">
+              <div class="field">
+                <label class="field-label">Horizontal Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-x" min="0.00" max="0.62" step="0.01" value="0.58" oninput="updateRange(this,'rng-sbx'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbx">0.58</span>
+                </div>
+                <div class="field-hint">0.00 = left · 0.31 ≈ centre · 0.58 = right (default)</div>
+              </div>
+              <div class="field">
+                <label class="field-label">Vertical Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-y" min="0.00" max="0.90" step="0.01" value="0.04" oninput="updateRange(this,'rng-sby'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sby">0.04</span>
+                </div>
+              </div>
             </div>
             <div class="field-hint" style="margin-bottom:10px;">Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.</div>
             <div class="sash-list" id="sash-priority-list"></div>
@@ -1516,17 +1758,18 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Quality Badges</span>
+            <button class="section-info-btn" onclick="openInfoModal('badges');event.stopPropagation()" title="About Quality Badges">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
             <div class="field">
               <label class="field-label">Display Mode</label>
               <select id="cfg-badge-display-mode" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
-                <option value="0">0. Hidden</option>
-                <option value="1">1. Quality Age Rating</option>
-                <option value="2">2. Quality Badge Row</option>
-                <option value="3">3. Age Rating Only</option>
-                <option value="4" selected>4. Tier Accent Bar</option>
+                <option value="0">Hidden</option>
+                <option value="4" selected>Quality Notch</option>
+                <option value="2">Quality Badge Row</option>
+                <option value="1">Quality Age Rating</option>
+                <option value="3">Age Rating Only</option>
               </select>
               <div class="field-hint" id="badge-mode1-hint">
                 The color of the font reflects stream quality, following medal tiers.
@@ -1573,6 +1816,7 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating Weights — Movies</span>
+            <button class="section-info-btn" onclick="openInfoModal('weights');event.stopPropagation()" title="About Rating Weights">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1590,6 +1834,7 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating Weights — TV</span>
+            <button class="section-info-btn" onclick="openInfoModal('weights');event.stopPropagation()" title="About Rating Weights">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1807,7 +2052,7 @@ function updateBadgeModeHint() {
   document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
   document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2 || mode === 4) ? '' : 'none';
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
-  document.getElementById('cfg-badge-h').value                     = mode === 4 ? 20 : 36;
+  document.getElementById('cfg-badge-h').value                     = mode === 4 ? 20 : mode === 2 ? 32 : 36;
 }
 
 function buildWeightSection(containerId, sources, defaults) {
@@ -2097,7 +2342,6 @@ function hydrateFromLocalStorage() {
 }
 
 function applyDefaultSelection() {
-  console.log('Applied defaults.');
   resolvedTmdbId = '1064213'; resolvedImdbId = 'tt28607951'; mediaType = 'movie';
   document.getElementById('cfg-tmdb-resolved').value = '1064213';
   document.getElementById('cfg-imdb').value = 'tt28607951';
@@ -2325,48 +2569,91 @@ function decodePlaceholders(url) {
 }
 
 function buildBaseParams({ usePlaceholders = false } = {}) {
-  const domain   = vEl('cfg-domain').replace(/\/$/, '') || 'https://your-instance.com';
-  const logoLanguage = vEl('cfg-language') || 'en';
-  const imdbId   = usePlaceholders ? '{imdb_id}'  : (resolvedImdbId  || '{imdb_id}');
-  const tmdbId   = usePlaceholders ? '{tmdb_id}'  : (resolvedTmdbId  || '{tmdb_id}');
-  const accKey   = vEl('cfg-access-key');
-  const type     = usePlaceholders ? '{type}'     : mediaType;
+  const domain         = vEl('cfg-domain').replace(/\/$/, '') || 'https://your-instance.com';
+  const logoLanguage   = vEl('cfg-language') || 'en';
+  const imdbId         = usePlaceholders ? '{imdb_id}'  : (resolvedImdbId  || '{imdb_id}');
+  const tmdbId         = usePlaceholders ? '{tmdb_id}'  : (resolvedTmdbId  || '{tmdb_id}');
+  const accKey         = vEl('cfg-access-key');
+  const type           = usePlaceholders ? '{type}'     : mediaType;
   const userTmdbKey    = vEl('cfg-tmdb-key');
   const userMdblistKey = vEl('cfg-mdblist-key');
+
+  const ratingMode = ni('cfg-rating-mode');
+  const badgeMode  = ni('cfg-badge-display-mode');
+  const showSash   = c('tog-award-sash');
+
   const params = new URLSearchParams();
-  params.set('tmdb_id', tmdbId); params.set('imdb_id', imdbId); params.set('type', type);
+
+  // ── Core identity ──────────────────────────────────────────────────────────
+  params.set('tmdb_id', tmdbId);
+  params.set('imdb_id', imdbId);
+  params.set('type',    type);
   if (accKey)         params.set('access_key',  accKey);
   if (userTmdbKey)    params.set('tmdb_key',     usePlaceholders ? '{tmdb_key}'    : userTmdbKey);
   if (userMdblistKey) params.set('mdblist_key',  usePlaceholders ? '{mdblist_key}' : userMdblistKey);
-  params.set('show_award_sash',    c('tog-award-sash') ? 'true' : 'false');
-  params.set('muted',              c('tog-muted')      ? 'true' : 'false');
-  params.set('badge_display_mode', ni('cfg-badge-display-mode'));
-  params.set('sash_priority',      getSashPriorityParam());
-  params.set('rating_display_mode',            ni('cfg-rating-mode'));
-  params.set('accent_bar_font_size_ratio',      n('cfg-font-mode1').toFixed(3));
-  params.set('numeric_score_font_size_ratio',   n('cfg-font-mode2').toFixed(3));
-  params.set('accent_bar_y_offset',             n('cfg-y-mode1').toFixed(2));
-  params.set('numeric_score_y_offset',          n('cfg-y-mode2').toFixed(2));
-  params.set('minimalist_mode_font_size_ratio', n('cfg-font-mode3').toFixed(3));
-  params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
-  params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
-  params.set('score_glow_threshold',   ni('cfg-glow-thresh'));
-  params.set('score_glow_blur',        ni('cfg-glow-blur'));
-  params.set('score_glow_alpha',       ni('cfg-glow-alpha'));
-  params.set('textless',                c('tog-textless')         ? 'true' : 'false');
-  params.set('score_color_mode',        ni('cfg-score-color-mode'));
-  params.set('logo_max_w_ratio',        n('cfg-logo-w').toFixed(2));
-  params.set('logo_max_h_ratio',        n('cfg-logo-h').toFixed(2));
-  params.set('logo_bottom_ratio',       n('cfg-logo-bottom').toFixed(2));
-  params.set('badge_height',           ni('cfg-badge-h'));
-  params.set('badge_gap',              ni('cfg-badge-gap'));
-  params.set('badge_anchor_x',          n('cfg-badge-x').toFixed(3));
-  params.set('badge_anchor_y',          n('cfg-badge-y').toFixed(3));
-  params.set('logo_language', logoLanguage);
-  const mw = getWeights('movie-weights', MOVIE_SOURCES);
-  const tw = getWeights('tv-weights',    TV_SOURCES);
-  params.set('movie_weights', Object.entries(mw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
-  params.set('tv_weights',    Object.entries(tw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
+
+  // ── Rating / Genre Label ───────────────────────────────────────────────────
+  params.set('rating_display_mode', ratingMode);
+  if (ratingMode !== 0) {
+    // Colour palette: only exposed in the UI for modes 1 and 3
+    if (ratingMode === 1 || ratingMode === 3) {
+      params.set('score_color_mode', ni('cfg-score-color-mode'));
+    }
+    if (ratingMode === 1) {
+      params.set('accent_bar_font_size_ratio', n('cfg-font-mode1').toFixed(3));
+      params.set('accent_bar_y_offset',        n('cfg-y-mode1').toFixed(2));
+      params.set('score_glow_threshold', ni('cfg-glow-thresh'));
+      params.set('score_glow_blur',      ni('cfg-glow-blur'));
+      params.set('score_glow_alpha',     ni('cfg-glow-alpha'));
+    } else if (ratingMode === 2) {
+      params.set('numeric_score_font_size_ratio', n('cfg-font-mode2').toFixed(3));
+      params.set('numeric_score_y_offset',        n('cfg-y-mode2').toFixed(2));
+    } else if (ratingMode === 3) {
+      params.set('minimalist_mode_font_size_ratio', n('cfg-font-mode3').toFixed(3));
+      params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
+      params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
+    }
+    // Rating weights only affect the displayed score
+    const mw = getWeights('movie-weights', MOVIE_SOURCES);
+    const tw = getWeights('tv-weights',    TV_SOURCES);
+    params.set('movie_weights', Object.entries(mw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
+    params.set('tv_weights',    Object.entries(tw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
+  }
+
+  // ── Logo ───────────────────────────────────────────────────────────────────
+  params.set('textless',          c('tog-textless') ? 'true' : 'false');
+  params.set('logo_language',     logoLanguage);
+  params.set('logo_max_w_ratio',  n('cfg-logo-w').toFixed(2));
+  params.set('logo_max_h_ratio',  n('cfg-logo-h').toFixed(2));
+  params.set('logo_bottom_ratio', n('cfg-logo-bottom').toFixed(2));
+
+  // ── Info Sash ──────────────────────────────────────────────────────────────
+  params.set('show_award_sash', showSash ? 'true' : 'false');
+  if (showSash) {
+    const isBadge = c('tog-sash-badge');
+    params.set('sash_badge', isBadge ? 'true' : 'false');
+    if (isBadge) {
+      // Muted is not compatible with badge style — omit it from URL
+      params.set('sash_badge_x', n('cfg-sash-badge-x').toFixed(2));
+      params.set('sash_badge_y', n('cfg-sash-badge-y').toFixed(2));
+    } else {
+      params.set('muted', c('tog-muted') ? 'true' : 'false');
+    }
+    params.set('sash_priority', getSashPriorityParam());
+  }
+
+  // ── Quality Badges ─────────────────────────────────────────────────────────
+  params.set('badge_display_mode', badgeMode);
+  if (badgeMode !== 0) {
+    params.set('badge_height',   ni('cfg-badge-h'));
+    params.set('badge_anchor_x', n('cfg-badge-x').toFixed(3));
+    params.set('badge_anchor_y', n('cfg-badge-y').toFixed(3));
+    if (badgeMode === 2) {
+      // badge_gap only applies to Quality Badge Row mode
+      params.set('badge_gap', ni('cfg-badge-gap'));
+    }
+  }
+
   const finalUrl = `${domain}/poster?${params.toString()}`;
   return usePlaceholders ? decodePlaceholders(finalUrl) : finalUrl;
 }
@@ -2405,6 +2692,7 @@ function resetDefaults() {
   sashDisabled = new Set();
   localStorage.removeItem('postersplus_sash_order');
   buildSashList();
+  updateSashBadgeFields();
   build();
   collapsePreview();
   setLog('preview-log', 'Reset to defaults. API keys preserved.', 'info');
@@ -2472,6 +2760,13 @@ async function loadPreview() {
   }
 }
 
+function updateSashBadgeFields() {
+  const isBadge = c('tog-sash-badge');
+  document.getElementById('sash-muted-row').style.display     = isBadge ? 'none' : '';
+  document.getElementById('sash-badge-offsets').style.display = isBadge ? '' : 'none';
+  if (isBadge) initCustomMobileSliders();
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   document.getElementById('rating-mode1-fields').style.display      = mode === 1 ? '' : 'none';
@@ -2485,6 +2780,29 @@ function updateRatingFields() {
 // URL Import
 // ---------------------------------------------------------------------------
 
+
+const _INFO_TITLES = {
+  core:    'Core Config',
+  rating:  'Rating / Genre Label',
+  logo:    'Logo',
+  sash:    'Info Sash',
+  badges:  'Quality Badges',
+  weights: 'Rating Weights',
+};
+
+function openInfoModal(section) {
+  document.querySelectorAll('#info-modal .info-panel').forEach(p => {
+    p.style.display = p.dataset.section === section ? '' : 'none';
+  });
+  document.getElementById('info-modal-title').textContent = _INFO_TITLES[section] || 'About';
+  document.getElementById('info-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeInfoModal() {
+  document.getElementById('info-modal').classList.remove('open');
+  document.body.style.overflow = '';
+}
 
 function toggleImportBar() {
   document.getElementById('import-modal').classList.add('open');
@@ -2503,6 +2821,31 @@ function applyImport() {
   if (!raw) return;
   const result = importUrl(raw);
   if (result) closeImportModal();
+}
+
+// ─── What's new ────────────────────────────────────────────────────────────
+// Bump WHATS_NEW_VERSION whenever the modal content changes — existing users
+// will see the unread dot on the chip until they open and acknowledge it.
+// The chip itself stays visible so users can re-open the list whenever.
+const WHATS_NEW_VERSION = '1.0.0';
+
+function openWhatsNew() {
+  document.getElementById('whatsnew-modal').classList.add('open');
+}
+
+function closeWhatsNew() {
+  document.getElementById('whatsnew-modal').classList.remove('open');
+  try { localStorage.setItem('postersplus_whatsnew_acked', WHATS_NEW_VERSION); } catch (_) {}
+  const chip = document.getElementById('whatsnew-chip');
+  if (chip) chip.dataset.acked = 'true';
+}
+
+function checkWhatsNew() {
+  const chip = document.getElementById('whatsnew-chip');
+  if (!chip) return;
+  let acked = null;
+  try { acked = localStorage.getItem('postersplus_whatsnew_acked'); } catch (_) {}
+  chip.dataset.acked = (acked === WHATS_NEW_VERSION) ? 'true' : 'false';
 }
 
 function _setEl(id, value) {
@@ -2558,8 +2901,12 @@ function importUrl(urlStr) {
   if (p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
 
   // ── Sash ────────────────────────────────────────────────────────────────
-  if (p.has('show_award_sash')) _setEl('tog-award-sash', p.get('show_award_sash'));
-  if (p.has('muted'))           _setEl('tog-muted',      p.get('muted'));
+  if (p.has('show_award_sash')) _setEl('tog-award-sash',    p.get('show_award_sash'));
+  if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
+  if (p.has('sash_badge'))      _setEl('tog-sash-badge',    p.get('sash_badge'));
+  if (p.has('sash_badge_x'))    _setEl('cfg-sash-badge-x',  p.get('sash_badge_x'));
+  if (p.has('sash_badge_y'))    _setEl('cfg-sash-badge-y',  p.get('sash_badge_y'));
+  updateSashBadgeFields();
 
   if (p.has('sash_priority')) {
     const tokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
@@ -2648,6 +2995,8 @@ hydrateFromLocalStorage();
 if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
 updateRatingFields();
 updateBadgeModeHint();
+updateSashBadgeFields();
+checkWhatsNew();
 build();
 
 fetchServerCaps().then(() => { queuePreviewReload(); });
@@ -2711,6 +3060,144 @@ initCustomMobileSliders();
 });
 </script>
 
+<div class="import-modal" id="info-modal" onclick="if(event.target===this)closeInfoModal()">
+  <div class="info-modal-box">
+    <div class="info-modal-header">
+      <span class="info-modal-title" id="info-modal-title">About</span>
+      <button class="info-modal-close" onclick="closeInfoModal()" aria-label="Close">✕</button>
+    </div>
+    <div class="info-modal-body">
+
+      <!-- CORE CONFIG -->
+      <div class="info-panel" data-section="core">
+        <div class="info-section">
+          <dl class="info-kv">
+            <dt>Search</dt>       <dd>Type in the name of any movie or show and see how it'll look. Be warned that clients use various sizes and rounding, you may have to tweak to your own client.</dd>
+            <dt>TMDB Key</dt>     <dd>Required for poster art, logos, and metadata. If the server host has set this, you don't need it.</dd>
+            <dt>MDBlist Key</dt>  <dd>Required for ratings, awards, and keyword data. If the server host has set this you don't need it.</dd>
+            <dt>Language</dt>    <dd>Posters+ will make the request in the language that you use, if it's not available it'll fallback to English.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- RATING / GENRE LABEL -->
+      <div class="info-panel" data-section="rating" style="display:none">
+        <div class="info-section">
+          <div class="info-section-title">Display Modes</div>
+          <dl class="info-kv">
+            <dt>None</dt>        <dd>Clean art, no score overlay. Best for a purely textless aesthetic.</dd>
+            <dt>Score Bar</dt>   <dd>Horizontal gradient bar with a percentage fill based on the rating. Under 50, 50 to 69, 70 to 84 and 85+ are the color tiers. Six band uses six tiers, instead.</dd>
+            <dt>Clean</dt>     <dd>Genre ★ score as centred text near the bottom. Omits year and the score bar.</dd>
+            <dt>Minimalist</dt>  <dd>Small render in the bottom right, the score seperator uses the same mechanics as score bar as a solid color rather than fill. The bottom vignette is also intentionally weaker in this mode.</dd>
+          </dl>
+        </div>
+        <div class="info-section" style="margin-top:16px">
+          <div class="info-section-title">Score Colour Palettes</div>
+          <dl class="info-kv">
+            <dt>Light</dt>   <dd>Designed to only use the brighest versions of each color, for "at a glance" ratings.</dd>
+            <dt>Dark/light</dt>  <dd>Dark red, red, amber, yellow, dark green, bright green to stick with easy to understand colors.</dd>
+            <dt>Prestige</dt>  <dd>Focuses on the bronze, silver and gold color scheme used throughout Posters+.</dd>
+          </dl>
+        </div>
+        <div class="info-section" style="margin-top:16px">
+          <div class="info-section-title">Glow &amp; Layout</div>
+          <ul>
+            <li>Threshold determines when glow activates, blur increases the radius and alpha increases the brightness.</li>
+            <li>Font size and vertical position are intended for customization across many clients.</li>
+            <li>In Minimalist mode, horizontal offset moves the pip away from the edge to improve client compatibility.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- LOGO -->
+      <div class="info-panel" data-section="logo" style="display:none">
+        <div class="info-section">
+          <div class="info-section-title">Textless Mode</div>
+          <ul>
+            <li><strong style="color:var(--silver-dim)">Textless</strong> — skips rendering the logo on the textless poster, use if you want to use your clients title display below the poster.</li>
+            <li>If no textless poster exists, the server falls back to cropping the title's landscape backdrop into a portrait frame. If neither exists, we fallback to the original art. If there's no art at all, a genre-tinted dark canvas is used to avoid 404.</li>
+          </ul>
+        </div>
+        <div class="info-section" style="margin-top:16px">
+          <div class="info-section-title">Logo Sizing &amp; Position</div>
+          <dl class="info-kv">
+            <dt>Max width</dt>   <dd>Logo is scaled so it never exceeds this fraction of the poster width.</dd>
+            <dt>Max height</dt>  <dd>Logo is scaled so it never exceeds this fraction of the poster height. Both constraints apply simultaneously — whichever is tighter wins.</dd>
+            <dt>Bottom ratio</dt><dd>Distance from the bottom edge as a fraction of poster height. Higher value moves the logo further up.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- INFO SASH -->
+      <div class="info-panel" data-section="sash" style="display:none">
+        <div class="info-section">
+          <div class="info-section-title">Sashes</div>
+          <ul>
+            <li>Award wins and nominations will only show best picture, outstanding drama/comedy/limited series, and the five main Golden Globes to avoid spam.</li>
+            <li>Film festivals cover (Cannes, Sundance, Venice) and many more.</li>
+            <li>Trending on TMDB is refreshed daily and uses the US top 40. </li>
+            <li>Cult classic status and true story use Mdblist keywords.</li>
+            <li>Highlighted studios, directors and cast are based on your instance operators settings.</li>
+            <li>Newly streaming pulls from both official digital release dates and Reddit.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- QUALITY BADGES -->
+      <div class="info-panel" data-section="badges" style="display:none">
+        <div class="info-section">
+          <div class="info-section-title">Display Modes</div>
+          <dl class="info-kv">
+            <dt>None</dt>         <dd>No badge. Cleanest look, no AIOStreams dependency.</dd>
+            <dt>Quality + Age</dt><dd>Colors the age rating based on quality. Uses a six point scoring system, 1080p, WebDL, HDR are 1. 4K, Remux, DV or HDR10+ are 2. Requires 2/4/6 for each tier.</dd>
+            <dt>Badge Row</dt>    <dd>PNG icon badges for format, badges are three categories: 1080p/4K, Web/Remux, HDR/DV/HDR10+</dd>
+            <dt>Age Only</dt>     <dd>Content-rating pill only — no quality dependency, works without AIOStreams.</dd>
+            <dt>Quality Notch</dt>  <dd>Very minimal accent notch, follows the same scoring system as quality + age.</dd>
+          </dl>
+        </div>
+        <div class="info-section" style="margin-top:16px">
+          <div class="info-section-title">Sizing &amp; Positioning</div>
+          <ul>
+            <li>Height sets badge image size in pixels. Mode 2 (Badge Row) defaults to 32px; other modes to 36px; Tier Accent to 20px.</li>
+            <li>Gap controls horizontal spacing between badges in Badge Row mode.</li>
+            <li>Anchor X / Y shift the badge cluster relative to the top-left corner of the poster.</li>
+            <li>Quality data is fetched from AIOStreams in the background on first request — the first render may show no badges while the cache warms. Subsequent requests will include badges.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- RATING WEIGHTS -->
+      <div class="info-panel" data-section="weights" style="display:none">
+        <div class="info-section">
+          <div class="info-section-title">How Weights Work</div>
+          <ul>
+            <li>Each slider sets the contribution of that source's score to the final weighted average.</li>
+            <li>Set a source to 0 to exclude it entirely — it won't be used even if data exists.</li>
+            <li>Sources with no data for a title are skipped automatically; the remaining sources are re-weighted.</li>
+            <li>Weights don't need to sum to 1 — they are normalised before computing the score.</li>
+          </ul>
+        </div>
+        <div class="info-section" style="margin-top:16px">
+          <div class="info-section-title">Source Notes</div>
+          <dl class="info-kv">
+            <dt>Letterboxd</dt>    <dd>Default strongest signal for film; community-curated, skews cinephile.</dd>
+            <dt>Trakt</dt>         <dd>Default strongest signal for TV; broad audience with good coverage of streaming originals.</dd>
+            <dt>RT Critic</dt>     <dd>Rotten Tomatoes critic score, tends to have high scores as they use pass/fail rather than numeric.</dd>
+            <dt>RT User</dt>       <dd>RT audience score, often diverges from critics.</dd>
+            <dt>IMDb</dt>          <dd>Wery wide coverage but can be skewed on polarising titles.</dd>
+            <dt>TMDB</dt>          <dd>Very wide coverage, fairly safe option.</dd>
+            <dt>Metacritic</dt>    <dd>Critic aggregate, below average coverage and skews lower scores.</dd>
+            <dt>Roger Ebert</dt>   <dd>Lowest coverage, as it's one singular review you can see scores of 100 here.</dd>
+            <dt>MyAnimeList</dt>   <dd>Anime only. Anime fans can set to 99% and set their movie/TV providers to around 1-2% and it'll normalize accordingly </dd>
+          </dl>
+          <p style="margin-top:8px">All data is fetched via MDBlist — an MDBlist API key is required for scores to appear.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="import-modal-box">
     <div class="import-modal-title">Import URL</div>
@@ -2720,6 +3207,24 @@ initCustomMobileSliders();
     <div class="import-modal-btns">
       <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" onclick="applyImport()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
+  <div class="import-modal-box">
+    <div class="import-modal-title">What's new in v1.0.0</div>
+    <ul class="whatsnew-list">
+      <li>Info Sash badge style — rounded rectangle alternative to the diagonal sash, with adjustable X/Y position</li>
+      <li>Per-section ⓘ info modals throughout the configurator</li>
+      <li>Golden Globe wins and nominations now have their own dedicated sash slots</li>
+      <li>Backdrop fallback — TMDB landscape backdrop is cropped to portrait when no textless poster (or no poster at all) is available</li>
+      <li>Genre-tinted fallback canvas — atmospheric colour matched to genre when no art exists</li>
+      <li>Smoother edges — Cairo antialiasing on award badge corners and pill renders</li>
+      <li>MDBlist rate-limit cooldown — automatic global pause on 429 to prevent cascade failures</li>
+    </ul>
+    <div class="import-modal-btns">
+      <button class="btn btn-primary" onclick="closeWhatsNew()">Got it</button>
     </div>
   </div>
 </div>

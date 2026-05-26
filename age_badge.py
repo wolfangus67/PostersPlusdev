@@ -3,7 +3,7 @@
 # Scoring (max 2 pts per category, 6 pts total):
 #   Resolution:  4K=2,    1080P=1
 #   Source:      REMUX=2, WEBDL=1
-#   Visual:      DV=2,    HDR10+=1, HDR10=1
+#   Visual:      DV=2,    HDR10+=2, HDR10=1
 #
 # Tiers → font colour:
 #   0–1 pts  → Grey     (unknown / poor quality)
@@ -12,9 +12,17 @@
 #   6+ pts   → Gold
 
 from __future__ import annotations
+import math
 import os
 from typing import Sequence
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import numpy as np
+
+try:
+    import cairo as _cairo
+    _HAS_CAIRO = True
+except ImportError:
+    _HAS_CAIRO = False
 
 
 # ---------------------------------------------------------------------------
@@ -110,16 +118,102 @@ def _font(name: str, size: int):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _cairo_pill_mask(w: int, h: int, radius: int) -> Image.Image:
+    """Antialiased greyscale pill mask via cairo; falls back to PIL if cairo unavailable."""
+    if _HAS_CAIRO:
+        r = min(radius, w / 2, h / 2)
+        surface = _cairo.ImageSurface(_cairo.FORMAT_A8, w, h)
+        ctx = _cairo.Context(surface)
+        ctx.set_antialias(_cairo.ANTIALIAS_BEST)
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 1.0)
+        ctx.new_sub_path()
+        ctx.arc(w - r, r,     r, -math.pi / 2,  0.0)
+        ctx.arc(w - r, h - r, r,  0.0,           math.pi / 2)
+        ctx.arc(r,     h - r, r,  math.pi / 2,   math.pi)
+        ctx.arc(r,     r,     r,  math.pi,        3 * math.pi / 2)
+        ctx.close_path()
+        ctx.fill()
+        surface.flush()
+        stride = surface.get_stride()
+        arr = np.frombuffer(bytes(surface.get_data()), dtype=np.uint8).reshape((h, stride))[:, :w].copy()
+        return Image.fromarray(arr, "L")
+    else:
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [(0, 0), (w - 1, h - 1)], radius=radius, fill=255
+        )
+        return mask
+
+
+# Reusable 1×1 probe surface — textbbox needs an ImageDraw but doesn't read
+# any pixels.  Allocated once at import time so per-call measurements don't
+# pay an Image.new() round trip.
+_PROBE = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+
 def _make_text_layer(
-    size: tuple[int, int],
     xy: tuple[int, int],
     text: str,
     font,
     fill: tuple[int, int, int, int],
-) -> Image.Image:
-    layer = Image.new("RGBA", size, (0, 0, 0, 0))
-    ImageDraw.Draw(layer).text(xy, text, font=font, fill=fill)
-    return layer
+    *,
+    blur: int = 0,
+) -> tuple[Image.Image, tuple[int, int]]:
+    """
+    Render *text* on a tightly-sized RGBA layer (just the glyph bbox plus
+    blur padding) and apply the Gaussian blur inside this function.  Returns
+    ``(layer, dest_xy)`` — alpha_composite the layer at dest_xy on the target
+    image to place the glyph in the same position it would occupy if drawn at
+    ``xy`` on a full-canvas layer.
+
+    Why: the badge previously created a full 500×750 RGBA layer per pass and
+    blurred the whole thing.  The actual ink occupies maybe 60×60 pixels.
+    GaussianBlur cost is proportional to area, so rendering on the glyph bbox
+    cuts blur time roughly 30–50× per pass.  Five passes per badge → big win.
+    """
+    bb = _PROBE.textbbox((0, 0), text, font=font)
+    # 3× sigma covers ~99% of a Gaussian — anything beyond that contributes
+    # less than 1% intensity and is safely cropped at the layer edge.
+    pad = blur * 3 if blur else 0
+    glyph_w = bb[2] - bb[0]
+    glyph_h = bb[3] - bb[1]
+    layer_w = glyph_w + 2 * pad
+    layer_h = glyph_h + 2 * pad
+
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    # Draw so the glyph ink lands at (pad, pad)..(pad + glyph_w, pad + glyph_h)
+    ImageDraw.Draw(layer).text(
+        (pad - bb[0], pad - bb[1]),
+        text, font=font, fill=fill,
+    )
+    if blur:
+        layer = layer.filter(ImageFilter.GaussianBlur(blur))
+
+    # Compositing the layer at this offset puts the ink where the original
+    # full-canvas (xy + bb[0..1]) draw would have placed it.
+    dest = (xy[0] + bb[0] - pad, xy[1] + bb[1] - pad)
+    return layer, dest
+
+
+def _composite_at(target: Image.Image, layer: Image.Image, dest: tuple[int, int]) -> None:
+    """
+    alpha_composite with negative-coordinate support.
+
+    PIL's alpha_composite refuses negative dest coordinates.  When the glyph
+    is in the top-left corner with a big glow padding, the dest can be slightly
+    negative — we handle that by clipping the source rectangle so the on-canvas
+    portion still composites correctly.
+    """
+    dx, dy = dest
+    sx = max(0, -dx)
+    sy = max(0, -dy)
+    dx = max(0, dx)
+    dy = max(0, dy)
+    if sx >= layer.width or sy >= layer.height:
+        return  # entirely off the left/top edge
+    if dx >= target.width or dy >= target.height:
+        return  # entirely off the right/bottom edge
+    target.alpha_composite(layer, dest=(dx, dy), source=(sx, sy))
 
 
 # ---------------------------------------------------------------------------
@@ -173,44 +267,44 @@ def draw_quality_age_badge(
     # Large, very-soft blur centred on the glyph — creates a luminance halo
     # that belongs to the numeral rather than the surface beneath it.
     glow_blur = max(font_size // 4, 8)
-    glow_layer = _make_text_layer(image.size, (tx, ty), age_text, font, colors["glow"])
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(glow_blur))
-    image.alpha_composite(glow_layer)
+    glow_layer, glow_dest = _make_text_layer(
+        (tx, ty), age_text, font, colors["glow"], blur=glow_blur,
+    )
+    _composite_at(image, glow_layer, glow_dest)
 
     # Second, slightly tighter pass at higher opacity for a warm core to the glow
     glow_core_color = (*colors["glow"][:3], min(255, colors["glow"][3] + 40))
-    glow_core = _make_text_layer(image.size, (tx, ty), age_text, font, glow_core_color)
-    glow_core = glow_core.filter(ImageFilter.GaussianBlur(glow_blur // 2))
-    image.alpha_composite(glow_core)
+    core_layer, core_dest = _make_text_layer(
+        (tx, ty), age_text, font, glow_core_color, blur=glow_blur // 2,
+    )
+    _composite_at(image, core_layer, core_dest)
 
     # ── 2. Drop shadow ────────────────────────────────────────────────────
     shadow_offset = max(1, font_size // 16)   # tighter than before for elegance
     shadow_blur   = max(2, font_size // 10)
-    shadow_layer  = _make_text_layer(
-        image.size,
+    shadow_layer, shadow_dest = _make_text_layer(
         (tx + shadow_offset, ty + shadow_offset),
-        age_text, font, colors["shadow"],
+        age_text, font, colors["shadow"], blur=shadow_blur,
     )
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(shadow_blur))
-    image.alpha_composite(shadow_layer)
+    _composite_at(image, shadow_layer, shadow_dest)
 
     # ── 3. Primary numeral ────────────────────────────────────────────────
-    text_layer = _make_text_layer(image.size, (tx, ty), age_text, font, colors["primary"])
-    image.alpha_composite(text_layer)
+    primary_layer, primary_dest = _make_text_layer(
+        (tx, ty), age_text, font, colors["primary"],
+    )
+    _composite_at(image, primary_layer, primary_dest)
 
     # ── 4. Highlight / inner-light pass ───────────────────────────────────
     # A slightly up-left shifted copy in near-white at low opacity creates the
     # illusion of light catching the top-left edge of the numeral — no container
     # needed; the effect belongs entirely to the glyph itself.
     hl_offset = max(1, font_size // 22)
-    hl_layer  = _make_text_layer(
-        image.size,
+    hl_layer, hl_dest = _make_text_layer(
         (tx - hl_offset, ty - hl_offset),
         age_text, font, colors["highlight"],
+        blur=max(1, font_size // 30),
     )
-    # Tiny blur so the highlight blends rather than creating a visible echo
-    hl_layer = hl_layer.filter(ImageFilter.GaussianBlur(max(1, font_size // 30)))
-    image.alpha_composite(hl_layer)
+    _composite_at(image, hl_layer, hl_dest)
 
 
 # ---------------------------------------------------------------------------
@@ -266,21 +360,24 @@ def draw_tier_bar(
     image.alpha_composite(glow_layer, dest=(x - pad, y - pad))
 
     # ── 2. Bar body ───────────────────────────────────────────────────────
+    bar_mask  = _cairo_pill_mask(bw, bh, radius)
+    bar_alpha = colors["primary"][3]
+    if bar_alpha < 255:
+        bar_mask = bar_mask.point(lambda v: v * bar_alpha // 255)
+    bar_strip = Image.new("RGBA", (bw, bh), colors["primary"][:3] + (0,))
+    bar_strip.putalpha(bar_mask)
     bar_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    ImageDraw.Draw(bar_layer).rounded_rectangle(
-        [x, y, x + bw, y + bh],
-        radius=radius,
-        fill=colors["primary"],
-    )
+    bar_layer.paste(bar_strip, (x, y))
     image.alpha_composite(bar_layer)
 
     # ── 3. Highlight sheen ────────────────────────────────────────────────
-    # Fill only the left half of the bar to simulate light catching the edge.
+    hl_w    = max(1, bw // 2)
+    hl_fill = (*colors["highlight"][:3], min(255, colors["highlight"][3] + 20))
+    hl_mask = _cairo_pill_mask(hl_w, bh, radius)
+    if hl_fill[3] < 255:
+        hl_mask = hl_mask.point(lambda v: v * hl_fill[3] // 255)
+    hl_strip = Image.new("RGBA", (hl_w, bh), hl_fill[:3] + (0,))
+    hl_strip.putalpha(hl_mask)
     hl_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    hl_w = max(1, bw // 2)
-    ImageDraw.Draw(hl_layer).rounded_rectangle(
-        [x, y, x + hl_w, y + bh],
-        radius=radius,
-        fill=(*colors["highlight"][:3], min(255, colors["highlight"][3] + 20)),
-    )
+    hl_layer.paste(hl_strip, (x, y))
     image.alpha_composite(hl_layer)

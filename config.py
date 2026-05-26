@@ -36,7 +36,7 @@ JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85")
 
 SHOW_RATING_DISPLAY_MODE = 1
 SHOW_AWARD_SASH          = True
-BADGE_DISPLAY_MODE = 2
+BADGE_DISPLAY_MODE       = 4
 
 # Poster Dimensions (500x750)
 
@@ -50,11 +50,11 @@ NUMERIC_SCORE_MODE_FONT_SIZE_RATIO = 0.10   # font size in numeric mode
 MINIMALIST_MODE_FONT_SIZE_RATIO    = 0.055  # font size in minimalist mode
 ACCENT_BAR_MODE_FONT_Y_OFFSET      = 0.90   # vertical alignment in accent bar mode
 NUMERIC_SCORE_MODE_FONT_Y_OFFSET   = 0.90   # vertical alignment in numeric score mode
-MINIMALIST_MODE_FONT_X_OFFSET      = 0.04   # horizontal distance from right edge in minimalist mode
+MINIMALIST_MODE_FONT_X_OFFSET      = 0.05   # horizontal distance from right edge in minimalist mode
 MINIMALIST_MODE_FONT_Y_OFFSET      = 0.92   # vertical position in minimalist mode (0=top, 1=bottom)
 
 SCORE_GLOW_THRESHOLD = 85  # score threshold to activate glow
-SCORE_GLOW_BLUR      = 2    # blur applied in glow mode
+SCORE_GLOW_BLUR      = 1    # blur applied in glow mode
 SCORE_GLOW_ALPHA     = 40   # alpha of the glow applied
 
 # Logo Defaults
@@ -66,7 +66,7 @@ DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", "en")
 
 # Quality Badge Defaults
 
-BADGE_HEIGHT = 32   # quality badge height in pixels
+BADGE_HEIGHT = 20   # quality badge height in pixels
 BADGE_GAP    = 8    # gap between horizontal stack badges in pixels
 
 BADGE_ANCHOR_X_RATIO = 0.050   # x offset from left
@@ -88,6 +88,12 @@ QUALITY_OLD_CACHE_DURATION   = int(os.environ.get("QUALITY_OLD_CACHE_DURATION", 
 # Max concurrent background quality fetches.  Caps the burst when many uncached
 # titles scroll into view simultaneously so AIOStreams isn't overwhelmed.
 QUALITY_BG_CONCURRENCY       = int(os.environ.get("QUALITY_BG_CONCURRENCY", "5"))
+
+# Max concurrent outbound MDBlist API calls.  MDBlist queues or drops requests
+# when hit with too many simultaneous connections from the same key, causing
+# ReadTimeouts even when the service is healthy.  3 is comfortably within their
+# apparent per-key concurrency limit while still allowing good parallelism.
+MDBLIST_CONCURRENCY          = int(os.environ.get("MDBLIST_CONCURRENCY", "3"))
 
 # Digital release (r/movieleaks) scraper settings
 DIGITAL_RELEASE_MIN_AGE_DAYS = 1    # ignore posts younger than this (mods still cleaning up)
