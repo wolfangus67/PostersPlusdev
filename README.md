@@ -18,6 +18,8 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 </p>
 <p align="center">
   <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai.png?raw=true" width="92%"/>
+  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai2.png" width="92%"/>
+  <img src="https://github.com/UmbraProjects/PostersPlus/blob/main/Showcase/showcase-kai3.png?raw=true" width="92%"/>
 </p>
 </p>
 
