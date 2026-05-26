@@ -332,6 +332,7 @@ class RequestConfig:
     muted: bool = False
     textless: bool = False
     score_color_mode: int = 2
+    top_gradient: str = "high"   # off | low | medium | high — strength of the top vignette
     sash_badge: bool = False   # True → badge style instead of diagonal sash
     sash_badge_x: float = 0.62   # badge left-edge as fraction of poster width (flush right with the corner)
     sash_badge_y: float = 0.04   # badge top-edge  as fraction of poster height
@@ -409,6 +410,17 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.show_award_sash         = _b("show_award_sash",        cfg.show_award_sash)
     cfg.muted                   = _b("muted",                  cfg.muted)
     cfg.textless                = _b("textless",               cfg.textless)
+    # top_gradient accepts off / low / medium / high.  Legacy boolean values
+    # (true / false) from pre-v1.0.4 URLs map to high / off respectively so
+    # cached configurator links keep working.
+    _tg_raw = (params.get("top_gradient") or "").strip().lower()
+    if _tg_raw in _TOP_GRADIENT_LEVELS:
+        cfg.top_gradient = _tg_raw
+    elif _tg_raw in ("true", "1", "yes"):
+        cfg.top_gradient = "high"
+    elif _tg_raw in ("false", "0", "no"):
+        cfg.top_gradient = "off"
+    # else: leave RequestConfig default ("high")
     cfg.sash_badge              = _b("sash_badge",             cfg.sash_badge)
     # Position ratios — full poster span so users can put the badge anywhere
     cfg.sash_badge_x            = _f("sash_badge_x",           cfg.sash_badge_x,           0.0, 1.0)
@@ -497,6 +509,18 @@ def _text_center(
 # Poster composition
 # ---------------------------------------------------------------------------
 
+# Top-vignette strength.  Each entry maps a level name to
+# (top_height_ratio, top_max_alpha).  None means "don't draw the gradient
+# at all".  The "high" preset matches the legacy always-on behaviour so
+# existing URLs / cached posters render identically when top_gradient is
+# omitted.  Tweak the values here to retune any preset.
+_TOP_GRADIENT_LEVELS: dict[str, tuple[float, int] | None] = {
+    "off":    None,
+    "low":    (0.20, 150),
+    "medium": (0.25, 190),
+    "high":   (0.40, 220),
+}
+
 # Genre-specific tint multipliers (R, G, B) for the fallback canvas.
 # Applied to a dark base luminance of 10–18, so the dominant channel peaks
 # around 30–55 at canvas midpoint — atmospheric rather than vivid.
@@ -582,15 +606,23 @@ def build_poster(
     draw = ImageDraw.Draw(image)
 
     # --- TOP GRADIENT (vectorised) ---
-    top_height = int(height * 0.4)
-    top_max_alpha = 220
-    t_top = np.linspace(0, 1, top_height, dtype=np.float32)
-    eased_top = ((1 - t_top) * top_max_alpha).astype(np.uint8)
-    top_array = np.broadcast_to(eased_top[:, np.newaxis], (top_height, width)).copy()
-    top_overlay = Image.fromarray(top_array, mode="L")
-    top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
-    top_tinted.putalpha(top_overlay)
-    image.paste(top_tinted, (0, 0), mask=top_tinted)
+    # Darkens the top of the poster so the age-rating numeral and quality
+    # badges stay legible over bright art.  Strength is one of four presets
+    # (off / low / medium / high) — see _TOP_GRADIENT_LEVELS for the
+    # (height_ratio, max_alpha) tuple each level uses.  Unknown level is
+    # treated as "high" rather than skipped so a typo in a URL doesn't
+    # silently disable the vignette.
+    _tg_preset = _TOP_GRADIENT_LEVELS.get(cfg.top_gradient, _TOP_GRADIENT_LEVELS["high"])
+    if _tg_preset is not None:
+        top_height_ratio, top_max_alpha = _tg_preset
+        top_height = int(height * top_height_ratio)
+        t_top = np.linspace(0, 1, top_height, dtype=np.float32)
+        eased_top = ((1 - t_top) * top_max_alpha).astype(np.uint8)
+        top_array = np.broadcast_to(eased_top[:, np.newaxis], (top_height, width)).copy()
+        top_overlay = Image.fromarray(top_array, mode="L")
+        top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
+        top_tinted.putalpha(top_overlay)
+        image.paste(top_tinted, (0, 0), mask=top_tinted)
 
     # --- BOTTOM GRADIENT (vectorised) ---
     # Minimalist mode sits closer to the bottom edge with a smaller label, so a

@@ -1422,7 +1422,7 @@
       <div class="notch"></div>
       <div class="panel-header">
         <span class="panel-title">Configuration</span>
-        <span class="panel-index">v1.0.3</span>
+        <span class="panel-index">v1.1-dev</span>
       </div>
       <div class="panel-body">
 
@@ -1537,6 +1537,16 @@
                 <option value="sw">Swahili</option>
                 <option value="af">Afrikaans</option>
               </select>
+            </div>
+            <div class="field" style="margin-top:6px;">
+              <label class="field-label">Top Vignette</label>
+              <select id="cfg-top-gradient" onchange="build(); queuePreviewReload()">
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high" selected>High</option>
+              </select>
+              <div class="field-hint">Darkening across the top of the poster. Keeps badges and info readable, directs the eye to the centre.</div>
             </div>
           </div>
         </div>
@@ -2612,6 +2622,7 @@ function buildBaseParams({ usePlaceholders = false } = {}) {
   if (accKey)         params.set('access_key',  accKey);
   if (userTmdbKey)    params.set('tmdb_key',     usePlaceholders ? '{tmdb_key}'    : userTmdbKey);
   if (userMdblistKey) params.set('mdblist_key',  usePlaceholders ? '{mdblist_key}' : userMdblistKey);
+  params.set('top_gradient', vEl('cfg-top-gradient') || 'high');
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   params.set('rating_display_mode', ratingMode);
@@ -2920,6 +2931,13 @@ function importUrl(urlStr) {
 
   // ── Logo language ───────────────────────────────────────────────────────
   if (p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
+  if (p.has('top_gradient')) {
+    // Accept legacy boolean values from pre-v1.0.4 URLs
+    let _tg = (p.get('top_gradient') || '').toLowerCase();
+    if (_tg === 'true'  || _tg === '1' || _tg === 'yes') _tg = 'high';
+    if (_tg === 'false' || _tg === '0' || _tg === 'no')  _tg = 'off';
+    if (['off','low','medium','high'].includes(_tg)) _setEl('cfg-top-gradient', _tg);
+  }
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('show_award_sash')) _setEl('tog-award-sash',    p.get('show_award_sash'));
@@ -3097,6 +3115,7 @@ initCustomMobileSliders();
             <dt>TMDB Key</dt>     <dd>Required for poster art, logos, and metadata. If the server host has set this, you don't need it.</dd>
             <dt>MDBlist Key</dt>  <dd>Required for ratings, awards, and keyword data. If the server host has set this you don't need it.</dd>
             <dt>Language</dt>    <dd>Posters+ will make the request in the language that you use, if it's not available it'll fallback to English.</dd>
+            <dt>Top Vignette</dt><dd>A dark fade across the top of the poster that keeps badges and age ratings readable over bright art. Four levels: Off / Low (subtle), Medium (balanced), High (strongest — the legacy look). Lower presets work better on art that's already dark up top.</dd>
           </dl>
         </div>
       </div>
