@@ -16,6 +16,7 @@ on:
       - '.devcontainer/**'
       - 'discovery_overrides.example.json'
       - '.github/**'
+      - 'Showcase/**'
 
 jobs:
   build-and-push:
