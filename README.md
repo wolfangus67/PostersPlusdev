@@ -57,12 +57,10 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 
 ## Quick Start
 
-> **HTTPS is required for production use.**
-> Stremio addons like AIOMetadata are served over HTTPS. Browsers enforce mixed content blocking, meaning any poster URLs referenced by an HTTPS addon must also be HTTPS - HTTP image URLs will be silently blocked, including in Stremio's web client. You will need a reverse proxy with a valid SSL certificate in front of PostersPlus before using it with Stremio.
->
-> Good choices are [Traefik](https://traefik.io/) which has great support from Viren's templates or [Caddy](https://caddyserver.com/) which is very simple. 
->
-> `http://localhost:8000` is only suitable for accessing the configurator locally during setup.
+> **HTTPS or AIOMetadata's proxy opton is required for production use.**
+> If going HTTPS route ensure the access_key env is set to protect your instance
+> Good reverse proxy choices are [Traefik](https://traefik.io/) which has great support from Viren's templates or [Caddy](https://caddyserver.com/) which is very simple. 
+> If going for AIOMetadata's proxy you don't expose PostersPlus to the internet. Use http://postersplus:8000 in the URL instead of a domain to have them communicate via Docker's internal network. The proxy route is slightly slower but maximizes security.
 
 ### Using the pre-built image (recommended)
 
@@ -83,7 +81,7 @@ services:
       - TMDB_API_KEY=your_tmdb_key
       - MDBLIST_API_KEY=your_mdblist_key
       - WORKERS=2
-      - ACCESS_KEY=youraccesskey 
+      - ACCESS_KEY=youraccesskey # Highly suggested if exposing to the internet.*
       # See .env.example for all available options
 ```
 
@@ -93,7 +91,7 @@ Then start it:
 docker compose up -d
 ```
 
-Once your reverse proxy is set up, open the configurator at your public HTTPS domain to tune your settings and generate a URL template for AIOMetadata. The URL it generates is based on the domain you access it from, so always open it via your real domain — not localhost.
+Once your reverse proxy is set up, open the configurator at your public HTTPS domain to tune your settings and generate a URL template for AIOMetadata. The URL it generates is based on the domain you access it from.
 
 ### Building from source
 
