@@ -1614,9 +1614,25 @@
                   <span class="range-val" id="rng-y1">0.90</span>
                 </div>
               </div>
+              <div class="field">
+                <label class="field-label">Bar Distance from Bottom</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bar-bottom" min="0.00" max="0.20" step="0.005" value="0.04" oninput="updateRange(this,'rng-bb'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bb">0.04</span>
+                </div>
+              </div>
             </div>
             <div id="rating-mode2-fields" style="display:none;">
-              <div class="field">
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Normalize score to 10</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="field" style="margin-top:10px;">
                 <label class="field-label">Font Size</label>
                 <div class="range-row">
                   <input type="range" id="cfg-font-mode2" min="0.04" max="0.16" step="0.005" value="0.10" oninput="updateRange(this,'rng-font2'); build(); queuePreviewReload()">
@@ -1848,28 +1864,31 @@
                 AIOStreams is not configured on this instance, quality data is unavailable.
               </div>
             </div>
-            <div class="two-col">
+            <!-- All layout controls collapse when Display Mode = Hidden (mode 0). -->
+            <div id="badge-layout-fields">
+              <div class="two-col">
+                <div class="field">
+                  <label class="field-label">Height (px)</label>
+                  <input type="number" id="cfg-badge-h" value="20" min="16" max="80" oninput="build(); queuePreviewReload()">
+                </div>
+                <div class="field" id="badge-gap-field" style="display:none">
+                  <label class="field-label">Gap (px)</label>
+                  <input type="number" id="cfg-badge-gap" value="8" min="0" max="32" oninput="build(); queuePreviewReload()">
+                </div>
+              </div>
+              <div class="field" style="margin-top:8px;">
+                <label class="field-label">Horizontal Distance from Left</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-badge-x" min="0.01" max="0.1" step="0.005" value="0.050" oninput="updateRange(this,'rng-bx'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bx">0.050</span>
+                </div>
+              </div>
               <div class="field">
-                <label class="field-label">Height (px)</label>
-                <input type="number" id="cfg-badge-h" value="20" min="16" max="80" oninput="build(); queuePreviewReload()">
-              </div>
-              <div class="field" id="badge-gap-field" style="display:none">
-                <label class="field-label">Gap (px)</label>
-                <input type="number" id="cfg-badge-gap" value="8" min="0" max="32" oninput="build(); queuePreviewReload()">
-              </div>
-            </div>
-            <div class="field" style="margin-top:8px;">
-              <label class="field-label">Horizontal Distance from Left</label>
-              <div class="range-row">
-                <input type="range" id="cfg-badge-x" min="0.01" max="0.1" step="0.005" value="0.050" oninput="updateRange(this,'rng-bx'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-bx">0.050</span>
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">Vertical Distance from Top</label>
-              <div class="range-row">
-                <input type="range" id="cfg-badge-y" min="0.01" max="0.95" step="0.005" value="0.050" oninput="updateRange(this,'rng-by'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-by">0.050</span>
+                <label class="field-label">Vertical Distance from Top</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-badge-y" min="0.01" max="0.95" step="0.005" value="0.050" oninput="updateRange(this,'rng-by'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-by">0.050</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2133,11 +2152,18 @@ function updateKeyBadges() {
 
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
+  const hidden = mode === 0;
   document.getElementById('badge-mode1-hint').style.display        = mode === 1 ? '' : 'none';
   document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
   document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2 || mode === 4) ? '' : 'none';
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
-  document.getElementById('cfg-badge-h').value                     = mode === 4 ? 20 : mode === 2 ? 32 : 36;
+  // Hide the whole height / horizontal / vertical block when badges are off —
+  // those knobs only mean anything when there's a badge being placed.  Gap is
+  // already mode-2-only and stays nested under this wrapper, so it follows.
+  document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
+  if (!hidden) {
+    document.getElementById('cfg-badge-h').value = mode === 4 ? 20 : mode === 2 ? 32 : 36;
+  }
 }
 
 function buildWeightSection(containerId, sources, defaults) {
@@ -2690,12 +2716,14 @@ function buildBaseParams({ usePlaceholders = false } = {}) {
       params.set('accent_bar_font_size_ratio', n('cfg-font-mode1').toFixed(3));
       params.set('accent_bar_y_offset',        n('cfg-y-mode1').toFixed(2));
       params.set('accent_bar_append_mode',     ni('cfg-bar-append'));
+      params.set('accent_bar_bottom_ratio',    n('cfg-bar-bottom').toFixed(3));
       params.set('score_glow_threshold', ni('cfg-glow-thresh'));
       params.set('score_glow_blur',      ni('cfg-glow-blur'));
       params.set('score_glow_alpha',     ni('cfg-glow-alpha'));
     } else if (ratingMode === 2) {
       params.set('numeric_score_font_size_ratio', n('cfg-font-mode2').toFixed(3));
       params.set('numeric_score_y_offset',        n('cfg-y-mode2').toFixed(2));
+      params.set('score_out_of_10',               c('tog-score-out-of-10') ? 'true' : 'false');
     } else if (ratingMode === 3) {
       params.set('minimalist_mode_font_size_ratio', n('cfg-font-mode3').toFixed(3));
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
@@ -3053,7 +3081,9 @@ function importUrl(urlStr) {
   if (p.has('rating_display_mode'))            _setEl('cfg-rating-mode',  p.get('rating_display_mode'));
   if (p.has('accent_bar_font_size_ratio'))     _setEl('cfg-font-mode1',   p.get('accent_bar_font_size_ratio'));
   if (p.has('accent_bar_append_mode'))         _setEl('cfg-bar-append',   p.get('accent_bar_append_mode'));
+  if (p.has('accent_bar_bottom_ratio'))        _setEl('cfg-bar-bottom',   p.get('accent_bar_bottom_ratio'));
   if (p.has('numeric_score_font_size_ratio'))  _setEl('cfg-font-mode2',   p.get('numeric_score_font_size_ratio'));
+  if (p.has('score_out_of_10'))                _setEl('tog-score-out-of-10', p.get('score_out_of_10'));
   if (p.has('accent_bar_y_offset'))            _setEl('cfg-y-mode1',      p.get('accent_bar_y_offset'));
   if (p.has('numeric_score_y_offset'))         _setEl('cfg-y-mode2',      p.get('numeric_score_y_offset'));
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));

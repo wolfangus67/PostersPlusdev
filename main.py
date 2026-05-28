@@ -307,7 +307,14 @@ class RequestConfig:
     accent_bar_font_size_ratio:    float = field(default_factory=lambda: _cfg.ACCENT_BAR_MODE_FONT_SIZE_RATIO)
     # Score Bar mode label suffix: 0 = Year (legacy default), 1 = Info sash, 2 = Year + Info sash
     accent_bar_append_mode:        int   = 0
+    # Score Bar position knob — distance from poster bottom edge as fraction of height.
+    # Default matches the legacy hardcoded 30px on a 500x750 poster.
+    accent_bar_bottom_ratio:       float = 0.04
     numeric_score_font_size_ratio: float = field(default_factory=lambda: _cfg.NUMERIC_SCORE_MODE_FONT_SIZE_RATIO)
+    # Clean mode (mode 2) numeric format.  When True, the rating is divided by
+    # 10 and shown to one decimal (87 → "8.7", 100 → "10.0").  Default keeps
+    # the legacy 0-100 integer form.
+    score_out_of_10: bool = False
     accent_bar_y_offset:           float = field(default_factory=lambda: _cfg.ACCENT_BAR_MODE_FONT_Y_OFFSET)
     numeric_score_y_offset:        float = field(default_factory=lambda: _cfg.NUMERIC_SCORE_MODE_FONT_Y_OFFSET)
     score_glow_threshold:          int   = field(default_factory=lambda: _cfg.SCORE_GLOW_THRESHOLD)
@@ -421,6 +428,7 @@ def build_request_config(params: dict) -> RequestConfig:
 
     cfg.show_award_sash         = _b("show_award_sash",        cfg.show_award_sash)
     cfg.muted                   = _b("muted",                  cfg.muted)
+    cfg.score_out_of_10         = _b("score_out_of_10",        cfg.score_out_of_10)
     cfg.textless                = _b("textless",               cfg.textless)
     # top_gradient accepts off / low / medium / high.  Legacy boolean values
     # (true / false) from pre-v1.0.4 URLs map to high / off respectively so
@@ -461,6 +469,7 @@ def build_request_config(params: dict) -> RequestConfig:
     # would overflow the poster; we cap at 0.5 to leave headroom for experimentation.
     cfg.accent_bar_font_size_ratio    = _f("accent_bar_font_size_ratio",    cfg.accent_bar_font_size_ratio,    0.0, 0.5)
     cfg.accent_bar_append_mode        = _i("accent_bar_append_mode",        cfg.accent_bar_append_mode,        0,   2)
+    cfg.accent_bar_bottom_ratio       = _f("accent_bar_bottom_ratio",       cfg.accent_bar_bottom_ratio,       0.0, 0.5)
     cfg.numeric_score_font_size_ratio = _f("numeric_score_font_size_ratio", cfg.numeric_score_font_size_ratio, 0.0, 0.5)
     cfg.accent_bar_y_offset           = _f("accent_bar_y_offset",           cfg.accent_bar_y_offset,           0.0, 1.0)
     cfg.numeric_score_y_offset        = _f("numeric_score_y_offset",        cfg.numeric_score_y_offset,        0.0, 1.0)
@@ -754,43 +763,74 @@ def build_poster(
             bottom_ratio=cfg.logo_bottom_ratio,
         )
     elif fallback_title:
+        # Multi-line aware fallback title rendering using Playfair Display Bold.
+        #
+        # Font size is scaled down as title length grows so long titles don't
+        # feel enormous.  The formula maps character count to a size ratio:
+        #   ≤10 chars  → 0.130  (~65 px on a 500 px wide poster)
+        #   20 chars   → 0.108
+        #   27 chars   → 0.094   ("Anoranzas del viejo cartago")
+        #   35 chars   → 0.078
+        #   ≥40 chars  → 0.070  (floor)
+        # A 2-line target + 80 % width margin keeps the text comfortably inside
+        # the poster without touching the edges.  The shrink loop is a safety
+        # net for very long or single-word titles that resist wrapping.
+        max_width      = int(width * 0.80)
+        title_cy       = height - int(height * 0.3)
+        _char_count    = len(fallback_title)
+        _raw_ratio     = 0.142 - _char_count * 0.0018
+        font_size      = int(width * max(0.070, min(0.130, _raw_ratio)))
+        MIN_FONT_SIZE  = 26
+        MAX_LINES      = 2
+        FONT_PATH      = os.path.join(_FONTS_DIR, "NotoSerif-Bold.ttf")
+
+        def _wrap_lines(text: str, current_font) -> list[str]:
+            """Greedy word-wrap: each line packs as many words as fit within max_width."""
+            words = text.split()
+            if not words:
+                return []
+            lines: list[str] = []
+            current: list[str] = []
+            for word in words:
+                candidate = " ".join(current + [word])
+                bb = draw.textbbox((0, 0), candidate, font=current_font)
+                if bb[2] - bb[0] <= max_width or not current:
+                    current.append(word)
+                else:
+                    lines.append(" ".join(current))
+                    current = [word]
+            if current:
+                lines.append(" ".join(current))
+            return lines
+
+        # Shrink font until the wrapped layout fits in MAX_LINES, then stop.
         try:
-            font_size = int(width * 0.1)
-            font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
+            font = ImageFont.truetype(FONT_PATH, font_size)
         except IOError:
             font = ImageFont.load_default()
+            lines = [fallback_title]
+        else:
+            while True:
+                lines = _wrap_lines(fallback_title, font)
+                if len(lines) <= MAX_LINES or font_size <= MIN_FONT_SIZE:
+                    break
+                font_size -= 4
+                try:
+                    font = ImageFont.truetype(FONT_PATH, font_size)
+                except IOError:
+                    break
 
-        title_cy = height - int(height * 0.3)
-        max_width = int(width * 0.82)
+        # Centre the multi-line block vertically around title_cy.
+        line_height    = int(font_size * 1.15)
+        total_height   = line_height * len(lines)
+        block_top      = title_cy - total_height // 2
+        shadow_offset  = max(2, int(font_size * 0.04))
 
-        while True:
-            bbox = draw.textbbox((0, 0), fallback_title, font=font)
-            text_width = bbox[2] - bbox[0]
-            if text_width <= max_width or font_size <= 24:  # type: ignore
-                break
-            font_size -= 2  # type: ignore
-            try:
-                font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
-            except IOError:
-                break
-
-        tx, ty = _text_center(draw, fallback_title, font, width / 2, title_cy)  # type: ignore
-        shadow_offset = max(2, int(font_size * 0.04))  # type: ignore
-        draw.text((tx + shadow_offset, ty + shadow_offset), fallback_title, font=font, fill=(0, 0, 0, 180))
-        draw.text((tx, ty), fallback_title, font=font, fill=(255, 255, 255, 255))
-
-        if no_poster:
-            # Small watermark below the title so viewers know this is a
-            # PostersPlus-generated fallback, not a client or CDN failure.
-            try:
-                wm_font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), 18)
-            except IOError:
-                wm_font = ImageFont.load_default()
-            wm_text = "Posters+ fallback"
-            wm_bb   = draw.textbbox((0, 0), wm_text, font=wm_font)
-            wm_x    = (width - (wm_bb[2] - wm_bb[0])) // 2
-            wm_y    = ty + (wm_bb[3] - wm_bb[1]) + int(font_size * 1.4)  # type: ignore
-            draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(160, 160, 160, 110))
+        for i, line in enumerate(lines):
+            line_cy = block_top + i * line_height + line_height // 2
+            tx, ty  = _text_center(draw, line, font, width / 2, line_cy)  # type: ignore
+            draw.text((tx + shadow_offset, ty + shadow_offset), line, font=font, fill=(0, 0, 0, 180))
+            draw.text((tx, ty),                                  line, font=font, fill=(255, 255, 255, 255))
 
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
     # itself is rendered.  Compact rating mode (4) also reads from this to
@@ -848,6 +888,7 @@ def build_poster(
             )
             draw_score_bar(
                 image, score,
+                bottom_margin=int(height * cfg.accent_bar_bottom_ratio),
                 glow_threshold=cfg.score_glow_threshold,
                 glow_blur=cfg.score_glow_blur,
                 glow_alpha=cfg.score_glow_alpha,
@@ -856,7 +897,16 @@ def build_poster(
 
         elif cfg.rating_display_mode == 2:
             font_size = int(width * cfg.numeric_score_font_size_ratio)
-            label = f"{genre} ★ {score}"
+            # Score formatting:
+            #   out of 100 (default): "87", "100", "N/A"
+            #   out of 10:            "8.7", "8.0" (always one decimal), "10"
+            #                         (no decimal — already two glyphs wide)
+            # Non-numeric scores ("N/A") pass through unchanged in either mode.
+            if cfg.score_out_of_10 and isinstance(score, (int, float)):
+                _score_text = "10" if score >= 100 else f"{score / 10:.1f}"
+            else:
+                _score_text = str(score)
+            label = f"{genre} ★ {_score_text}"
             rating_cy = height * cfg.numeric_score_y_offset
 
             try:
@@ -1530,7 +1580,7 @@ async def get_poster(
             trending_rank,
         ) = await asyncio.gather(
             _image_coro,
-            fetch_logo(client, logos, rcfg.logo_language) if (is_textless and not is_no_poster) else _resolved(None),
+            fetch_logo(client, logos, rcfg.logo_language, imdb_id=imdb_id) if (is_textless and not is_no_poster) else _resolved(None),
             rating_coro,
             fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )

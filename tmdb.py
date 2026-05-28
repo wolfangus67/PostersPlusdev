@@ -305,12 +305,79 @@ async def fetch_backdrop_image(
     return image
 
 
+async def _fetch_metahub_logo(
+    client: httpx.AsyncClient,
+    imdb_id: str,
+) -> Image.Image | None:
+    """
+    Fetch a title logo from the Metahub CDN (images.metahub.space).
+
+    Metahub is the same CDN Cinemeta (Stremio's catalogue addon) uses for
+    logo art.  It requires no authentication and caches aggressively
+    (max-age ≈ 60 days server-side).  We use it as a final fallback when
+    TMDB has no logo candidates for a given title.
+
+    URL pattern: https://images.metahub.space/logo/medium/{imdb_id}/img
+    """
+    cache_key = f"metahub_logo_{imdb_id}"
+    cached_bytes = get_cached_tmdb_logo(cache_key)
+
+    if cached_bytes:
+        logger.info(f"Metahub logo cache hit for {imdb_id}")
+        return Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
+
+    url = f"https://images.metahub.space/logo/medium/{imdb_id}/img"
+    logger.info(f"External API Call: Requested logo from Metahub for {imdb_id}")
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 404:
+            logger.info(f"Metahub: no logo for {imdb_id}")
+            return None
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(f"Metahub logo fetch failed for {imdb_id}: {exc}")
+        return None
+    except Exception as exc:
+        logger.warning(f"Metahub logo fetch error for {imdb_id}: {exc}")
+        return None
+
+    try:
+        logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    except Exception as exc:
+        logger.warning(f"Metahub logo parse failed for {imdb_id}: {exc}")
+        return None
+
+    bbox = logo.getchannel("A").getbbox()
+    if bbox:
+        logo = logo.crop(bbox)
+
+    logo = ensure_light_logo(logo)
+
+    buf = io.BytesIO()
+    logo.save(buf, format="PNG")
+    set_cached_tmdb_logo(cache_key, buf.getvalue())
+
+    return logo
+
+
 async def fetch_logo(
     client: httpx.AsyncClient,
     logos: list[dict],
     logo_language: str = "en",
+    imdb_id: str | None = None,
 ) -> Image.Image | None:
+    """
+    Fetch the best available logo for a title, with a Metahub CDN fallback.
 
+    Resolution order:
+      1. TMDB logo in the requested language (logo_language).
+      2. TMDB language-neutral logo (iso_639_1 is null/"").
+      3. TMDB English logo.
+      4. Metahub CDN logo (images.metahub.space) — requires imdb_id.
+      5. None — no logo available.
+
+    All results are cached locally so repeat requests never hit external APIs.
+    """
     preferred = [
         lg for lg in logos
         if lg["file_path"].endswith(".png")
@@ -338,6 +405,9 @@ async def fetch_logo(
     )
 
     if not candidates:
+        # No TMDB logo — try Metahub before giving up
+        if imdb_id:
+            return await _fetch_metahub_logo(client, imdb_id)
         return None
 
     logo_path = candidates[0]["file_path"]
