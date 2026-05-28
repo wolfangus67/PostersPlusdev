@@ -1326,6 +1326,8 @@ def draw_award_badge(
         border_rgb = (102, 187, 106)
     elif sash_type == "info":
         border_rgb = (100, 220, 210)
+    elif sash_type == "alert":
+        border_rgb = (240, 100, 100)
     elif sash_type == "trending":
         border_rgb = (160, 220, 255)
     else:  # "nom"
@@ -1496,6 +1498,9 @@ def draw_award_sash(
     elif sash_type == "info":
         hi, lo        = (60, 190, 180, 255), (30, 130, 120, 255)
         border_colour = (100, 220, 210, 255)
+    elif sash_type == "alert":
+        hi, lo        = (200, 55, 55, 255), (145, 25, 25, 255)
+        border_colour = (240, 100, 100, 255)
     elif sash_type == "trending":
         hi, lo        = (90, 170, 255, 255), (50, 110, 190, 255)
         border_colour = (160, 220, 255, 255)

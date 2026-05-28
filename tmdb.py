@@ -2,6 +2,7 @@
 import asyncio
 import io
 import logging
+from datetime import date as _date, datetime as _datetime
 import httpx
 import numpy as np
 
@@ -17,6 +18,8 @@ from cache import (
     set_cached_tmdb_logo,
     get_cached_tmdb_metadata,
     set_cached_tmdb_metadata,
+    get_cached_release_status,
+    set_cached_release_status,
 )
 
 from config import (
@@ -105,6 +108,7 @@ async def fetch_poster_metadata(
             "runtime":               meta.get("runtime"),
             "number_of_seasons":     meta.get("number_of_seasons"),
             "number_of_episodes":    meta.get("number_of_episodes"),
+            "tmdb_status":           meta.get("tmdb_status"),
         }
         return (
             meta["genre_ids"],
@@ -190,6 +194,7 @@ async def fetch_poster_metadata(
     runtime              = data.get("runtime")
     number_of_seasons    = data.get("number_of_seasons")
     number_of_episodes   = data.get("number_of_episodes")
+    tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
 
     set_cached_tmdb_metadata(
         metadata_cache_key,
@@ -206,6 +211,7 @@ async def fetch_poster_metadata(
         number_of_seasons=number_of_seasons,
         number_of_episodes=number_of_episodes,
         backdrop_path=backdrop_path,
+        tmdb_status=tmdb_status,
     )
 
     tmdb_data = {
@@ -215,6 +221,7 @@ async def fetch_poster_metadata(
         "runtime":              runtime,
         "number_of_seasons":    number_of_seasons,
         "number_of_episodes":   number_of_episodes,
+        "tmdb_status":          tmdb_status,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data
@@ -265,23 +272,36 @@ def _saliency_crop_left(image: Image.Image, crop_w: int) -> int:
     """
     Find the best left-edge x-coordinate for a portrait crop of a landscape image.
 
-    Uses a gradient-magnitude saliency map to locate the most visually active
-    horizontal strip, with a mild Gaussian centre bias so low-contrast or
-    near-uniform frames still land close to centre rather than snapping to an
-    arbitrary edge.
+    Uses three complementary saliency signals combined into a per-column profile,
+    then picks the crop window with the highest score.  A mild Gaussian centre
+    bias acts as a tiebreaker when the scene is uniform so the result never drifts
+    to an arbitrary edge.
 
-    Algorithm:
-      1. Downsample to ≤320 px wide (speed — saliency is scale-invariant).
-      2. Convert to greyscale and compute L1 gradient magnitude (|∂x| + |∂y|).
-      3. Collapse the gradient map to a 1-D per-column saliency profile.
-      4. Slide a window of width crop_w across the profile and find the peak.
-      5. Add a Gaussian centre bias (≈20 % of peak saliency) as a tiebreaker
-         so the crop never drifts far from centre when the scene is uniform.
-      6. Scale the winning position back to full resolution and clamp.
+    Signals (all computed on a 320 px-wide thumbnail for speed):
+
+    1. Skin-tone mask  — HSV-based detection of warm pinkish-orange hues that
+       reliably indicate human (and many animated) characters.  Strong weight
+       (×4) because it's the most semantically meaningful signal for movie art.
+
+    2. Center-surround saliency  — Difference of two Gaussian blurs at different
+       radii (fine ≈ 4 % of width, coarse ≈ 20 % of width).  Finds blobs that
+       are locally distinct from their surroundings — faces, figures, bright
+       objects — rather than just any edge or texture.  Weight ×2.
+
+    3. Saturation  — Subjects tend to be more saturated than blurred/desaturated
+       backgrounds.  Lightweight secondary signal (×0.5).
+
+    Vertical weighting: upper 65 % of frame gets 2× weight because characters'
+    faces and torsos live in the top half; floors and landscape fill the bottom.
+
+    Centre bias: ≈10 % of peak score — gentle enough not to override clear signal
+    but prevents chaotic results on uniformly textured frames.
     """
+    from PIL import ImageFilter
+
     w, h = image.size
     if crop_w >= w:
-        return 0  # already fits — no crop needed
+        return 0
 
     # --- Downsample for speed ------------------------------------------------
     SMALL_W = 320
@@ -290,38 +310,73 @@ def _saliency_crop_left(image: Image.Image, crop_w: int) -> int:
     sh      = max(1, int(h * scale))
     scrop_w = max(1, int(crop_w * scale))
 
-    grey = np.array(
-        image.resize((sw, sh), Image.LANCZOS).convert("L"),
-        dtype=np.float32,
-    )
+    small = image.resize((sw, sh), Image.LANCZOS).convert("RGB")
+    rgb   = np.array(small, dtype=np.float32) / 255.0   # H × W × 3, [0,1]
+    r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
 
-    # --- Gradient magnitude --------------------------------------------------
-    # Simple finite differences — fast and sufficient for saliency.
-    gx = np.abs(np.diff(grey, axis=1, prepend=grey[:, :1]))
-    gy = np.abs(np.diff(grey, axis=0, prepend=grey[:1, :]))
-    grad = gx + gy   # H × W, L1 gradient magnitude
+    # --- Skin-tone mask (HSV) ------------------------------------------------
+    # Compute V, S, H in numpy without scipy.
+    cmax  = np.maximum(np.maximum(r, g), b)
+    cmin  = np.minimum(np.minimum(r, g), b)
+    delta = cmax - cmin
 
-    # --- Per-column saliency profile -----------------------------------------
-    col_sal = grad.sum(axis=0)   # shape (sw,)
+    v = cmax
+    s = np.zeros_like(cmax)
+    np.divide(delta, cmax, out=s, where=cmax > 1e-5)
 
-    # --- Sliding-window via cumulative sum (O(n)) ----------------------------
-    cum          = np.concatenate([[0.0], col_sal.cumsum()])
-    n_positions  = sw - scrop_w + 1
+    # Hue in [0, 360)
+    hue = np.zeros((sh, sw), dtype=np.float32)
+    m_r = (cmax == r) & (delta > 1e-5)
+    m_g = (cmax == g) & (delta > 1e-5)
+    m_b = (cmax == b) & (delta > 1e-5)
+    hue[m_r] = (60.0 * ((g[m_r] - b[m_r]) / delta[m_r])) % 360.0
+    hue[m_g] =  60.0 *  (b[m_g] - r[m_g]) / delta[m_g] + 120.0
+    hue[m_b] =  60.0 *  (r[m_b] - g[m_b]) / delta[m_b] + 240.0
+
+    # Skin: hue in [0,25]∪[335,360], moderate saturation, reasonable brightness.
+    skin = (
+        ((hue <= 25.0) | (hue >= 335.0)) &
+        (s >= 0.15) & (s <= 0.90) &
+        (v >= 0.25)
+    ).astype(np.float32)
+
+    # --- Center-surround saliency (DoG) --------------------------------------
+    grey_pil  = Image.fromarray((rgb @ np.array([0.2126, 0.7152, 0.0722]) * 255).clip(0,255).astype(np.uint8))
+    r_fine    = max(1, int(sw * 0.04))
+    r_coarse  = max(1, int(sw * 0.20))
+    fine      = np.array(grey_pil.filter(ImageFilter.GaussianBlur(radius=r_fine)),   dtype=np.float32)
+    coarse    = np.array(grey_pil.filter(ImageFilter.GaussianBlur(radius=r_coarse)), dtype=np.float32)
+    dog       = np.abs(fine - coarse) / 255.0   # [0, 1]
+
+    # --- Saturation layer ----------------------------------------------------
+    sat = s   # already [0, 1]
+
+    # --- Vertical weighting --------------------------------------------------
+    # Upper 65 % of rows get a 2× boost; lower 35 % stay at 1×.
+    vert = np.ones(sh, dtype=np.float32)
+    vert[:int(sh * 0.65)] = 2.0
+
+    # --- Combine -------------------------------------------------------------
+    saliency = (skin * 4.0 + dog * 2.0 + sat * 0.5) * vert[:, np.newaxis]
+
+    col_sal = saliency.sum(axis=0)   # shape (sw,)
+
+    # --- Sliding-window via cumulative sum -----------------------------------
+    cum         = np.concatenate([[0.0], col_sal.cumsum()])
+    n_positions = sw - scrop_w + 1
     if n_positions <= 1:
         return 0
 
     window_scores = cum[scrop_w:scrop_w + n_positions] - cum[:n_positions]
 
-    # --- Gaussian centre bias ------------------------------------------------
-    # Peaks at the natural centre crop position; amplitude ≈ 20 % of the max
-    # window score so it acts as a tiebreaker without overriding strong signal.
+    # --- Gaussian centre bias (10 % of peak) ---------------------------------
     centre  = (n_positions - 1) / 2.0
-    sigma   = n_positions * 0.35          # wide bell — gentle nudge
+    sigma   = n_positions * 0.35
     xs      = np.arange(n_positions, dtype=np.float32)
     bias    = np.exp(-0.5 * ((xs - centre) / sigma) ** 2)
     sal_max = window_scores.max()
     if sal_max > 0:
-        bias *= sal_max * 0.20
+        bias *= sal_max * 0.10
 
     best_small_left = int((window_scores + bias).argmax())
 
@@ -560,6 +615,98 @@ async def fetch_trending_rank(
         logger.info(f"Trending rank for {tmdb_id}: #{rank}")
 
     return rank
+
+
+async def fetch_release_status(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    tmdb_key: str,
+    media_type: str,
+    tmdb_status: str | None,
+) -> str | None:
+    """
+    Determine the current release status for the info sash.
+
+    TV shows: mapped from the TMDB ``status`` field (already fetched as part
+    of poster metadata, so no extra API call is needed).
+
+    Movies: consults ``/movie/{id}/release_dates`` to determine whether the
+    film is on physical media (Physical), digital/streaming (Streaming), still
+    theatrical-only (Cinema), or not yet released (Production).  Result is
+    cached for 7 days via the ``release_status_cache`` table.
+
+    Returns one of: "Physical" | "Streaming" | "Cinema" | "Production" |
+                    "Returning" | "Ended" | "Cancelled" | None.
+    """
+    cache_key = f"{media_type}_{tmdb_id}"
+    cached = get_cached_release_status(cache_key)
+    if cached:
+        return cached
+
+    result: str | None = None
+
+    if media_type in ("tv", "series"):
+        # No extra API call — map the status field we already have.
+        _tv_map: dict[str, str] = {
+            "Returning Series": "Returning",
+            "In Production":    "Production",
+            "Planned":          "Production",
+            "Pilot":            "Production",
+            "Ended":            "Ended",
+            "Cancelled":        "Cancelled",
+            "Canceled":         "Cancelled",
+        }
+        result = _tv_map.get(tmdb_status or "")
+    else:
+        # For movies already known to be pre-release, skip the API call.
+        _pre_release = {"In Production", "Post Production", "Planned", "Rumored"}
+        if tmdb_status in _pre_release:
+            result = "Production"
+        elif tmdb_status == "Cancelled":
+            result = "Cancelled"
+        else:
+            # Fetch release dates to distinguish Physical / Streaming / Cinema.
+            try:
+                logger.info(f"External API Call: TMDB release_dates for movie {tmdb_id}")
+                resp = await client.get(
+                    f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates",
+                    params={"api_key": tmdb_key},
+                )
+                resp.raise_for_status()
+                today = _date.today()
+                has_physical = has_digital = has_theatrical = False
+                for entry in resp.json().get("results", []):
+                    for rd in entry.get("release_dates", []):
+                        rtype = rd.get("type")
+                        date_str = (rd.get("release_date") or "")[:10]
+                        try:
+                            rdate = _date.fromisoformat(date_str)
+                        except (ValueError, TypeError):
+                            continue
+                        if rdate > today:
+                            continue
+                        if rtype == 5:
+                            has_physical = True
+                        elif rtype == 4:
+                            has_digital = True
+                        elif rtype == 3:
+                            has_theatrical = True
+
+                if has_physical:
+                    result = "Physical"
+                elif has_digital:
+                    result = "Streaming"
+                elif has_theatrical:
+                    result = "Cinema"
+                else:
+                    result = "Production"
+            except Exception as exc:
+                logger.warning(f"fetch_release_status failed for {tmdb_id}: {exc}")
+                return None
+
+    if result:
+        set_cached_release_status(cache_key, result)
+    return result
 
 
 # ---------------------------------------------------------------------------

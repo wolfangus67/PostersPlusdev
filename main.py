@@ -216,7 +216,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label
-from tmdb import composite_logo, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank
+from tmdb import composite_logo, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -1716,6 +1716,22 @@ async def get_poster(
         logger.info(f"Quality for {imdb_id}: tokens={quality_tokens} year={release_year}")
 
         # ------------------------------------------------------------------
+        # Release status (opt-in via sash_priority — movies make an extra
+        # /release_dates API call; TV is free, mapped from tmdb_status)
+        # ------------------------------------------------------------------
+        _release_status: str | None = None
+        if "release_status" in rcfg.sash_priority:
+            _release_status = await fetch_release_status(
+                client, tmdb_id, effective_tmdb_key, type,
+                tmdb_data.get("tmdb_status"),
+            )
+            # r/movieleaks confirmation overrides TMDB's theatrical/production
+            # status — if the film is in the digital-release cache it's already
+            # streaming regardless of what the official release dates say.
+            if _release_status in ("Cinema", "Production") and is_digital_release(imdb_id):
+                _release_status = "Streaming"
+
+        # ------------------------------------------------------------------
         # Build DiscoveryMeta
         # ------------------------------------------------------------------
         discovery_meta = extract_discovery_meta(
@@ -1731,6 +1747,7 @@ async def get_poster(
             is_true_story_override=is_true_story,
             is_metacritic_override=is_metacritic,
             is_digital_release_override=is_digital_release(imdb_id),
+            release_status_override=_release_status,
         )
 
         # ------------------------------------------------------------------
@@ -1764,6 +1781,7 @@ async def get_poster(
                 "matched_studios":   discovery_meta.matched_studios,
                 "matched_directors": discovery_meta.matched_directors,
                 "matched_cast":      discovery_meta.matched_cast,
+                "release_status":    discovery_meta.release_status,
                 "sash_priority":     rcfg.sash_priority,
                 "badge_display_mode":rcfg.badge_display_mode,
                 "rating_display_mode":rcfg.rating_display_mode,

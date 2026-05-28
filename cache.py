@@ -140,6 +140,18 @@ def init_db() -> None:
         )
     """)
 
+    # Release status cache — populated on demand when the "release_status"
+    # sash slot is enabled.  Stored separately from the main metadata cache
+    # so users who don't enable the feature never pay the extra API call.
+    # cache_key = "{media_type}_{tmdb_id}", status = "BluRay"|"Streaming"|"Cinema"|"Production"
+    _db_conn.execute("""
+        CREATE TABLE IF NOT EXISTS release_status_cache (
+            cache_key TEXT PRIMARY KEY,
+            status    TEXT NOT NULL,
+            cached_at INTEGER NOT NULL
+        )
+    """)
+
     # Migrate existing tmdb_metadata_cache rows
     existing_meta_cols = {
         row[1]
@@ -153,6 +165,7 @@ def init_db() -> None:
         ("number_of_episodes",  "INTEGER"),
         ("original_language",   "TEXT"),
         ("backdrop_path",       "TEXT"),
+        ("tmdb_status",         "TEXT"),
     ):
         if col not in existing_meta_cols:
             _db_conn.execute(
@@ -301,6 +314,13 @@ def prune_caches() -> None:
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} expired digital release cache entries")
+
+            release_status_cutoff = now - _RELEASE_STATUS_TTL_DAYS * 86400
+            r = db.execute(
+                "DELETE FROM release_status_cache WHERE cached_at < ?", (release_status_cutoff,)
+            )
+            if r.rowcount:
+                logger.info(f"Pruned {r.rowcount} expired release status cache entries")
 
             db.commit()
 
@@ -656,7 +676,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    logos_json, cached_at,
                    credits_json, production_cos_json,
                    runtime, number_of_seasons, number_of_episodes,
-                   original_language, backdrop_path
+                   original_language, backdrop_path, tmdb_status
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -670,7 +690,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             logos_json, cached_at,
             credits_json, production_cos_json,
             runtime, number_of_seasons, number_of_episodes,
-            original_language, backdrop_path,
+            original_language, backdrop_path, tmdb_status,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -697,6 +717,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "number_of_episodes":   number_of_episodes,
             "original_language":    original_language,
             "backdrop_path":        backdrop_path,
+            "tmdb_status":          tmdb_status,
         }
     except Exception as exc:
         logger.error(f"TMDB metadata cache read error: {exc}")
@@ -719,6 +740,7 @@ def set_cached_tmdb_metadata(
     number_of_seasons: int | None = None,
     number_of_episodes: int | None = None,
     backdrop_path: str | None = None,
+    tmdb_status: str | None = None,
 ) -> None:
     try:
         with _db_lock:
@@ -729,8 +751,8 @@ def set_cached_tmdb_metadata(
                      poster_path, logos_json, cached_at,
                      credits_json, production_cos_json,
                      runtime, number_of_seasons, number_of_episodes,
-                     original_language, backdrop_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     original_language, backdrop_path, tmdb_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -748,6 +770,7 @@ def set_cached_tmdb_metadata(
                     number_of_episodes,
                     original_language,
                     backdrop_path,
+                    tmdb_status,
                 ),
             )
             get_db().commit()
@@ -816,3 +839,51 @@ def add_digital_releases(entries: list[tuple[str, int]]) -> int:
     except Exception as exc:
         logger.error(f"Digital release cache write error: {exc}")
     return inserted
+
+
+# ---------------------------------------------------------------------------
+# Release status cache
+# ---------------------------------------------------------------------------
+# Cached separately from main metadata so the extra TMDB /release_dates call
+# only happens for users who have enabled the "release_status" sash slot.
+# TTL: 7 days — status changes slowly (Cinema → Streaming → BluRay is one-way).
+
+_RELEASE_STATUS_TTL_DAYS = 7
+
+
+def get_cached_release_status(cache_key: str) -> str | None:
+    """Return the cached release status string, or None if absent / expired."""
+    try:
+        with _db_lock:
+            row = get_db().execute(
+                "SELECT status, cached_at FROM release_status_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        if not row:
+            return None
+        status, cached_at = row
+        age_days = (time.time() - cached_at) / 86400
+        if age_days > _RELEASE_STATUS_TTL_DAYS:
+            logger.info(f"Release status cache expired for {cache_key} ({age_days:.1f}d old)")
+            return None
+        return status
+    except Exception as exc:
+        logger.error(f"Release status cache read error: {exc}")
+        return None
+
+
+def set_cached_release_status(cache_key: str, status: str) -> None:
+    """Upsert a release status entry."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                """
+                INSERT INTO release_status_cache (cache_key, status, cached_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET status=excluded.status, cached_at=excluded.cached_at
+                """,
+                (cache_key, status, int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Release status cache write error: {exc}")

@@ -434,7 +434,7 @@
     cursor: pointer;
   }
 
-  select option { background: var(--black2); }
+  select option { background: var(--black2); color: var(--text-primary); }
 
   /* ── TMDB SEARCH ── */
   .search-wrap { position: relative; }
@@ -760,15 +760,23 @@
     text-align: right;
     cursor: text;
     border-radius: 3px;
-    transition: outline 0.1s;
-    outline: 1px solid transparent;
   }
-  .range-val[contenteditable="true"] {
-    outline: 1px solid var(--gold);
-    padding: 0 3px;
-    cursor: text;
+  .range-val:hover { text-decoration: underline dotted var(--gold-dim); }
+
+  /* Temporary input that replaces a .range-val span while editing. */
+  .range-val-edit {
+    font-size: 11px;
+    font-family: var(--mono);
     color: #fff;
+    background: var(--black3);
+    border: 1px solid var(--gold-dim);
+    border-radius: 3px;
+    padding: 1px 4px;
+    text-align: right;
+    outline: none;
+    min-width: 36px;
   }
+  .range-val-edit:focus { border-color: var(--gold); }
 
   /* ── WEIGHTS ── */
   .weight-grid { display: flex; flex-direction: column; gap: 8px; }
@@ -2012,14 +2020,19 @@ const SASH_SLOTS = [
   { id:'trending',   label:'TMDB Trending Top 40',              color:'#5aaaff' },
   { id:'cult',       label:'Cult Classic',                      color:'#5aaaff' },
   { id:'foreign',    label:'Foreign Language',                  color:'#3ab0a8' },
-  { id:'new_release', label:'Newly Streaming',                  color:'#3ab0a8' },
+  { id:'new_release', label:'New',                              color:'#e05555' },
   { id:'metacritic', label:'Metacritic Must-See',               color:'#9a9a9a' },
   { id:'true_story', label:'True Story',                        color:'#3ab0a8' },
-  { id:'structural', label:'Short / Mini / Binge',              color:'#3ab0a8' },
+  { id:'structural',     label:'Short / Mini / Binge',              color:'#3ab0a8' },
+  { id:'release_status', label:'Release Status (extra API call)',    color:'#e05555' },
 ];
 
-let sashOrder    = SASH_SLOTS.map(s => s.id);
-let sashDisabled = new Set();   // IDs explicitly disabled via ✕ button
+// "release_status" is disabled by default — it requires an extra TMDB API
+// call for movies and users should opt in deliberately.
+const SASH_DEFAULT_DISABLED = new Set(['release_status']);
+
+let sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
+let sashDisabled = new Set(SASH_DEFAULT_DISABLED);   // IDs explicitly disabled via ✕ button
 let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
 let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false };
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
@@ -2463,6 +2476,14 @@ function loadSashOrder() {
     const savedOrder    = Array.isArray(saved) ? saved          : (saved.order    || []);
     const savedDisabled = Array.isArray(saved) ? []             : (saved.disabled || []);
     sashDisabled = new Set(savedDisabled.filter(id => knownIds.has(id)));
+    // Slots that are new (absent from savedOrder AND savedDisabled) inherit
+    // SASH_DEFAULT_DISABLED so opt-in features stay off for existing users
+    // who have a stored layout from before the slot existed.
+    for (const id of SASH_DEFAULT_DISABLED) {
+      if (!savedOrder.includes(id) && !sashDisabled.has(id)) {
+        sashDisabled.add(id);
+      }
+    }
     const valid   = savedOrder.filter(id => knownIds.has(id) && !sashDisabled.has(id));
     const missing = SASH_SLOTS.map(s => s.id).filter(id => !valid.includes(id) && !sashDisabled.has(id));
     sashOrder = [...valid, ...missing];
@@ -2910,8 +2931,8 @@ function resetDefaults() {
   });
   buildWeightSection('movie-weights', MOVIE_SOURCES, DEFAULT_MOVIE_W);
   buildWeightSection('tv-weights',    TV_SOURCES,    DEFAULT_TV_W);
-  sashOrder    = SASH_SLOTS.map(s => s.id);
-  sashDisabled = new Set();
+  sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
+  sashDisabled = new Set(SASH_DEFAULT_DISABLED);
   localStorage.removeItem('postersplus_sash_order');
   buildSashList();
   // Refresh the mode-conditional field visibility so the blocks for the
