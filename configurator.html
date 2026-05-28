@@ -1066,6 +1066,17 @@
   .btn-reset { color: #555b68; border-color: #313642; }
   .btn-reset:hover { background: var(--black3); border-color: var(--silver-dim); color: var(--silver-dim); }
 
+  /* URL display box — shown instead of clipboard copy on LAN IPs */
+  #url-display-row { margin-top: 6px; display: none; }
+  #url-display-input {
+    width: 100%; box-sizing: border-box;
+    font-size: 9px; font-family: monospace;
+    color: var(--silver-dim); background: var(--black);
+    border: 1px solid var(--border);
+    padding: 5px 8px; cursor: text;
+  }
+  #url-display-input:focus { outline: none; border-color: var(--gold-dim); color: var(--text-primary); }
+
   .copy-feedback {
     font-size: 9px;
     color: var(--gold);
@@ -1977,6 +1988,11 @@
             <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()">Reset</button>
             <span class="copy-feedback" id="copy-fb">Copied ✓</span>
           </div>
+          <div id="url-display-row">
+            <input type="text" id="url-display-input" readonly
+                   onclick="this.select()"
+                   title="Click to select all, then Ctrl+C to copy">
+          </div>
           <div class="log-line" id="preview-log">ready.</div>
         </div>
       </div>
@@ -1988,12 +2004,32 @@
 <script>
 const qs = new URLSearchParams(window.location.search);
 
+// ---------------------------------------------------------------------------
+// Access-origin detection
+// 192.168.x.x — LAN IP: clipboard API unavailable (non-secure context), and
+//               AIOMetadata users need the postersplus hostname in the URL.
+// 127.0.0.1   — localhost: clipboard works, but same postersplus rewrite needed.
+// ---------------------------------------------------------------------------
+const _LAN_IP        = /^192\.168\.\d+\.\d+$/.test(window.location.hostname);
+const _REWRITE_DOMAIN = _LAN_IP || window.location.hostname === '127.0.0.1';
+const _SHOW_URL_BOX   = _LAN_IP;   // 127.0.0.1 supports clipboard; LAN IPs don't
+
 (function deriveAuthFromUrl() {
-  const domain = window.location.origin;
+  // Rewrite the service domain to http://postersplus:<port> when accessed from
+  // a LAN IP or localhost so the generated URL works with AIOMetadata's proxy.
+  const port   = window.location.port || '8000';
+  const domain = _REWRITE_DOMAIN
+    ? `http://postersplus:${port}`
+    : window.location.origin;
   document.getElementById('cfg-domain').value = domain;
   const ak = qs.get('access_key') || localStorage.getItem('postersplus_access_key') || '';
   document.getElementById('cfg-access-key').value = ak;
   if (ak) localStorage.setItem('postersplus_access_key', ak);
+
+  // Show the URL display box on LAN IPs so users can Ctrl+A / Ctrl+C.
+  if (_SHOW_URL_BOX) {
+    document.getElementById('url-display-row').style.display = 'block';
+  }
 })();
 
 const MOVIE_SOURCES = ['letterboxd','trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','rogerebert','myanimelist'];
@@ -2781,14 +2817,20 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function build() { return buildPreviewUrl(); }
+function build() {
+  const url = buildPreviewUrl();
+  if (_SHOW_URL_BOX) {
+    document.getElementById('url-display-input').value = buildTemplateUrl();
+  }
+  return url;
+}
 
 function decodePlaceholders(url) {
   return url.replace(/%7B/g, '{').replace(/%7D/g, '}');
 }
 
-function buildBaseParams({ usePlaceholders = false } = {}) {
-  const domain         = vEl('cfg-domain').replace(/\/$/, '') || 'https://your-instance.com';
+function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}) {
+  const domain         = (domainOverride || vEl('cfg-domain')).replace(/\/$/, '') || 'https://your-instance.com';
   const logoLanguage   = vEl('cfg-language') || 'en';
   const imdbId         = usePlaceholders ? '{imdb_id}'  : (resolvedImdbId  || '{imdb_id}');
   const tmdbId         = usePlaceholders ? '{tmdb_id}'  : (resolvedTmdbId  || '{tmdb_id}');
@@ -2897,10 +2939,24 @@ function buildBaseParams({ usePlaceholders = false } = {}) {
   return usePlaceholders ? decodePlaceholders(finalUrl) : finalUrl;
 }
 
-function buildPreviewUrl() { return buildBaseParams({ usePlaceholders: false }); }
+function buildPreviewUrl() {
+  // When the domain has been rewritten to postersplus:port, the preview image
+  // must still load from the actual origin so it resolves in the browser.
+  const override = _REWRITE_DOMAIN ? window.location.origin : null;
+  return buildBaseParams({ usePlaceholders: false, domainOverride: override });
+}
 function buildTemplateUrl() { return buildBaseParams({ usePlaceholders: true }); }
 
 async function copyUrl() {
+  // On LAN IPs clipboard is unavailable (non-secure context). Focus the URL
+  // display box and select all so the user can Ctrl+C manually.
+  if (_SHOW_URL_BOX) {
+    const inp = document.getElementById('url-display-input');
+    inp.focus();
+    inp.select();
+    setLog('preview-log', 'URL selected — press Ctrl+C to copy, then paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'info');
+    return;
+  }
   const url = buildTemplateUrl();
   try {
     await navigator.clipboard.writeText(url);
