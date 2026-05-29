@@ -196,6 +196,37 @@ async def fetch_poster_metadata(
     number_of_episodes   = data.get("number_of_episodes")
     tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
 
+    # If the content's original language wasn't included in the initial image
+    # request (e.g. a Romanian show fetched by an English-language user), TMDB
+    # won't return native-language logos.  Do a cheap supplemental /images call
+    # so we can cache those logos alongside the rest.  Skipped when the original
+    # language is already covered by _img_langs (en or user's logo_language).
+    _covered = {logo_language, "en"}
+    if (
+        original_language
+        and original_language not in _covered
+        and not any(lg.get("iso_639_1") == original_language for lg in logos)
+    ):
+        try:
+            logger.info(
+                f"Fetching supplemental {original_language} logos for {tmdb_id}"
+            )
+            supp = await client.get(
+                f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/images",
+                params={
+                    "api_key":                tmdb_key,
+                    "include_image_language": original_language,
+                },
+            )
+            if supp.status_code == 200:
+                supp_logos = supp.json().get("logos", [])
+                logos = logos + supp_logos
+                logger.info(
+                    f"Added {len(supp_logos)} {original_language} logo(s) for {tmdb_id}"
+                )
+        except Exception as exc:
+            logger.warning(f"Supplemental logo fetch failed for {tmdb_id}: {exc}")
+
     set_cached_tmdb_metadata(
         metadata_cache_key,
         title,
@@ -456,19 +487,26 @@ async def _fetch_metahub_logo(
         logger.info(f"Metahub logo cache hit for {imdb_id}")
         return Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
 
-    url = f"https://images.metahub.space/logo/medium/{imdb_id}/img"
-    logger.info(f"External API Call: Requested logo from Metahub for {imdb_id}")
-    try:
-        resp = await client.get(url)
-        if resp.status_code == 404:
-            logger.info(f"Metahub: no logo for {imdb_id}")
-            return None
-        resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(f"Metahub logo fetch failed for {imdb_id}: {exc}")
-        return None
-    except Exception as exc:
-        logger.warning(f"Metahub logo fetch error for {imdb_id}: {exc}")
+    # Try medium first (smaller payload), fall back to large — some titles only
+    # have a large-size entry on Metahub and the medium URL 404s.
+    resp = None
+    for size in ("medium", "large", "small"):
+        url = f"https://images.metahub.space/logo/{size}/{imdb_id}/img"
+        logger.info(f"External API Call: Requested logo from Metahub ({size}) for {imdb_id}")
+        try:
+            r = await client.get(url, follow_redirects=True)
+            if r.status_code == 404:
+                logger.info(f"Metahub: no {size} logo for {imdb_id}")
+                continue
+            r.raise_for_status()
+            resp = r
+            break
+        except httpx.HTTPStatusError as exc:
+            logger.warning(f"Metahub logo fetch failed for {imdb_id} ({size}): {exc}")
+        except Exception as exc:
+            logger.warning(f"Metahub logo fetch error for {imdb_id} ({size}): {exc}")
+
+    if resp is None:
         return None
 
     try:
@@ -495,38 +533,44 @@ async def fetch_logo(
     logos: list[dict],
     logo_language: str = "en",
     imdb_id: str | None = None,
+    original_language: str | None = None,
+    skip_native: bool = False,
 ) -> Image.Image | None:
     """
     Fetch the best available logo for a title, with a Metahub CDN fallback.
 
     Resolution order:
       1. TMDB logo in the requested language (logo_language).
-      2. TMDB language-neutral logo (iso_639_1 is null/"").
-      3. TMDB English logo.
-      4. Metahub CDN logo (images.metahub.space) — requires imdb_id.
-      5. None — no logo available.
+      2. TMDB logo in the content's original language (original_language) —
+         helps foreign titles that only have a native-language logo on TMDB.
+         Skipped when skip_native=True (caller prefers a text-title fallback).
+      3. TMDB language-neutral logo (iso_639_1 is null/"").
+      4. TMDB English logo.
+      5. Metahub CDN logo (images.metahub.space) — requires imdb_id.
+      6. None — no logo available; the caller may render the translated title
+         as text instead.
 
     All results are cached locally so repeat requests never hit external APIs.
     """
-    preferred = [
-        lg for lg in logos
-        if lg["file_path"].endswith(".png")
-        and lg.get("iso_639_1") == logo_language
-    ]
+    _png = [lg for lg in logos if lg["file_path"].endswith(".png")]
 
-    english = [
-        lg for lg in logos
-        if lg["file_path"].endswith(".png")
-        and lg.get("iso_639_1") == "en"
-    ]
+    preferred = [lg for lg in _png if lg.get("iso_639_1") == logo_language]
+    # Native: original-language logos, skipped when it duplicates preferred
+    # (same bucket), when original_language wasn't provided, or when the caller
+    # has opted for a text-title fallback over a native-language logo.
+    native    = (
+        [lg for lg in _png if lg.get("iso_639_1") == original_language]
+        if (original_language and original_language != logo_language and not skip_native)
+        else []
+    )
+    neutral   = [lg for lg in _png if lg.get("iso_639_1") in (None, "")]
+    english   = [lg for lg in _png if lg.get("iso_639_1") == "en"]
 
-    neutral = [
-        lg for lg in logos
-        if lg["file_path"].endswith(".png")
-        and lg.get("iso_639_1") in (None, "")
-    ]
-
-    candidates = preferred or neutral or english
+    # Resolution order: requested language → content's original language →
+    # language-neutral → English → Metahub CDN → None.
+    # Note: when logo_language == "en", preferred and english are the same bucket;
+    # the "or" short-circuits so english is never tried twice.
+    candidates = preferred or native or neutral or english
 
     candidates = sorted(
         candidates,
@@ -535,7 +579,7 @@ async def fetch_logo(
     )
 
     if not candidates:
-        # No TMDB logo — try Metahub before giving up
+        # No TMDB logo at all — try Metahub before giving up
         if imdb_id:
             return await _fetch_metahub_logo(client, imdb_id)
         return None
@@ -646,13 +690,17 @@ async def fetch_release_status(
     result: str | None = None
 
     if media_type in ("tv", "series"):
-        # No extra API call — map the status field we already have.
+        # No extra API call — map the TMDB status field we already have.
+        # "Ended" and "Cancelled" both mean the show has fully aired; assume
+        # it's on streaming rather than showing a run-status label that says
+        # nothing about where you can actually watch it.  "Cancelled" is kept
+        # distinct so users know the story may be unresolved.
         _tv_map: dict[str, str] = {
-            "Returning Series": "Returning",
+            "Returning Series": "Airing",
             "In Production":    "Production",
             "Planned":          "Production",
             "Pilot":            "Production",
-            "Ended":            "Ended",
+            "Ended":            "Streaming",  # completed run → assume available on streaming
             "Cancelled":        "Cancelled",
             "Canceled":         "Cancelled",
         }
@@ -666,6 +714,13 @@ async def fetch_release_status(
             result = "Cancelled"
         else:
             # Fetch release dates to distinguish Physical / Streaming / Cinema.
+            # TMDB release date types:
+            #   3 = Theatrical   4 = Digital   5 = Physical   6 = TV (broadcast/cable)
+            # Type 6 covers TV movies and specials that never had a theatrical run;
+            # treat it the same as digital/streaming since those titles are now on
+            # streaming platforms.  If the movie is marked "Released" by TMDB but has
+            # no matching release date entries (common for older/obscure titles with
+            # incomplete TMDB data), default to "Streaming" rather than "Production".
             try:
                 logger.info(f"External API Call: TMDB release_dates for movie {tmdb_id}")
                 resp = await client.get(
@@ -687,7 +742,7 @@ async def fetch_release_status(
                             continue
                         if rtype == 5:
                             has_physical = True
-                        elif rtype == 4:
+                        elif rtype in (4, 6):   # digital or TV broadcast
                             has_digital = True
                         elif rtype == 3:
                             has_theatrical = True
@@ -698,6 +753,10 @@ async def fetch_release_status(
                     result = "Streaming"
                 elif has_theatrical:
                     result = "Cinema"
+                elif tmdb_status == "Released":
+                    # Released per TMDB but no release date records found —
+                    # incomplete TMDB data rather than genuinely unreleased.
+                    result = "Streaming"
                 else:
                     result = "Production"
             except Exception as exc:

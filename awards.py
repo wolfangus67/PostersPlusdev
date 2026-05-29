@@ -1473,6 +1473,8 @@ def draw_award_sash(
     label: str,
     sash_type: str = "win",
     muted: bool = False,
+    length_ratio: float = 1.15,
+    height_ratio: float = 0.12,
 ) -> Image.Image:
     width, height = image.size
 
@@ -1481,8 +1483,8 @@ def draw_award_sash(
     # the rotation + downsample cost roughly in half (the dominant phases of the
     # whole sash pipeline). Drop to 1 only if you can also drop the rotation.
     SS          = 3
-    sash_length = int(width * 1.15) #1.1
-    sash_height = int(width * 0.12) #0.12
+    sash_length = int(width * length_ratio)
+    sash_height = int(width * height_ratio)
 
     sl, sh = sash_length * SS, sash_height * SS
 

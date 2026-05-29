@@ -1568,6 +1568,14 @@
               </select>
             </div>
             <div class="field" style="margin-top:6px;">
+              <label class="field-label">Missing Logo Fallback</label>
+              <select id="cfg-logo-native-fallback" onchange="build(); queuePreviewReload()">
+                <option value="true" selected>Native Language Logo</option>
+                <option value="false">Translated Title Text</option>
+              </select>
+              <div class="field-hint">Fetch a logo in the original language before falling back to Metahub or basic text rendering</div>
+            </div>
+            <div class="field" style="margin-top:6px;">
               <label class="field-label">Top Vignette</label>
               <select id="cfg-top-gradient" onchange="build(); queuePreviewReload()">
                 <option value="off">Off</option>
@@ -1857,6 +1865,22 @@
                 
               </div>
             </div>
+            <div id="sash-size-fields" style="margin-bottom:10px; display:none;">
+              <div class="field">
+                <label class="field-label">Sash Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-height" min="0.06" max="0.20" step="0.005" value="0.12" oninput="updateRange(this,'rng-sh'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sh">0.12</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Distance from Corner</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-length" min="0.80" max="1.50" step="0.01" value="1.15" oninput="updateRange(this,'rng-sl'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sl">1.15</span>
+                </div>
+              </div>
+            </div>
             <div class="field-hint" style="margin-bottom:10px;">Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.</div>
             <div class="sash-list" id="sash-priority-list"></div>
           </div>
@@ -1890,7 +1914,23 @@
                 If media quality is un-cached, it's fetched in the background and applied for future requests.
               </div>
               <div class="field-hint" id="aiostreams-hint" style="display:none">
-                AIOStreams is not configured on this instance, quality data is unavailable.
+                No quality source is configured on this instance. The operator can set up AIOStreams or a Stremio scraper via environment variables.
+              </div>
+
+              <!-- Wait for quality toggle (shown when quality badges are enabled) -->
+              <div id="wait-quality-field" style="display:none; margin-top:8px;">
+                <div class="toggle-row">
+                  <div>
+                    <div class="toggle-label">Wait for Quality</div>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-wait-quality" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="field-hint">
+                  Block the response until quality is fetched, slows down requests significantly.
+                </div>
               </div>
             </div>
             <!-- All layout controls collapse when Display Mode = Hidden (mode 0). -->
@@ -2070,7 +2110,7 @@ const SASH_DEFAULT_DISABLED = new Set(['release_status']);
 let sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
 let sashDisabled = new Set(SASH_DEFAULT_DISABLED);   // IDs explicitly disabled via ✕ button
 let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
-let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false };
+let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false };
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
 
 const previewPanel = document.querySelector('.preview-panel');
@@ -2280,9 +2320,19 @@ function updateKeyBadges() {
     mdbInput.placeholder = 'Required for uncached titles';
   }
 
+  updateScraperHint();
+}
+
+function updateScraperHint() {
+  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
+  const qualityMode = mode === 1 || mode === 2 || mode === 4;
+  document.getElementById('wait-quality-field').style.display = qualityMode ? '' : 'none';
   const aiosHint = document.getElementById('aiostreams-hint');
   if (aiosHint) {
-    aiosHint.style.display = serverCaps.aiostreams_configured ? 'none' : '';
+    // quality_configured was added later; fall back to aiostreams_configured so
+    // servers that haven't been restarted yet still suppress the hint correctly.
+    const qualityOk = serverCaps.quality_configured || serverCaps.aiostreams_configured;
+    aiosHint.style.display = (qualityMode && !qualityOk) ? '' : 'none';
   }
 }
 
@@ -2293,6 +2343,7 @@ function updateBadgeModeHint() {
   document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
   document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2 || mode === 4) ? '' : 'none';
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
+  updateScraperHint();
   // Hide the whole height / horizontal / vertical block when badges are off —
   // those knobs only mean anything when there's a badge being placed.  Gap is
   // already mode-2-only and stays nested under this wrapper, so it follows.
@@ -2653,13 +2704,15 @@ async function doSearch() {
 
   setSearchBusy(true); closeResults();
   try {
-    const domain = vEl('cfg-domain').replace(/\/$/, '');
+    // Use the actual server origin for API calls — not the rewritten AIOMetadata
+    // hostname (postersplus:port) which is only valid inside the Docker network.
+    const apiOrigin = window.location.origin;
     const accKey = vEl('cfg-access-key');
     const params = new URLSearchParams({ q });
     if (userTmdbKey) params.set('tmdb_key', userTmdbKey);
     if (accKey)      params.set('access_key', accKey);
 
-    const resp = await fetch(`${domain}/search?${params}`);
+    const resp = await fetch(`${apiOrigin}/search?${params}`);
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
       throw new Error(data.detail || `Error ${resp.status}`);
@@ -2798,11 +2851,10 @@ async function fetchImdbId(tmdbId, type) {
       const data = await resp.json();
       return data.imdb_id || null;
     } else {
-      // Fall back to server proxy
-      const domain = vEl('cfg-domain').replace(/\/$/, '');
+      // Fall back to server proxy — use actual origin, not the rewritten AIOMetadata hostname.
       const params = new URLSearchParams({ tmdb_id: tmdbId, type });
       if (accKey) params.set('access_key', accKey);
-      const resp = await fetch(`${domain}/resolve-imdb?${params}`);
+      const resp = await fetch(`${window.location.origin}/resolve-imdb?${params}`);
       if (!resp.ok) return null;
       const data = await resp.json();
       return data.imdb_id || null;
@@ -2891,9 +2943,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   }
 
   // ── Logo ───────────────────────────────────────────────────────────────────
-  params.set('textless',          c('tog-textless') ? 'true' : 'false');
-  params.set('logo_language',     logoLanguage);
-  params.set('logo_max_w_ratio',  n('cfg-logo-w').toFixed(2));
+  params.set('textless',              c('tog-textless') ? 'true' : 'false');
+  params.set('logo_language',         logoLanguage);
+  params.set('logo_native_fallback',  vEl('cfg-logo-native-fallback') || 'true');
+  params.set('logo_max_w_ratio',      n('cfg-logo-w').toFixed(2));
   params.set('logo_max_h_ratio',  n('cfg-logo-h').toFixed(2));
   params.set('logo_bottom_ratio', n('cfg-logo-bottom').toFixed(2));
 
@@ -2908,7 +2961,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('sash_badge_y',    n('cfg-sash-badge-y').toFixed(2));
       params.set('sash_badge_size', n('cfg-sash-badge-size').toFixed(2));
     } else {
-      params.set('muted', c('tog-muted') ? 'true' : 'false');
+      params.set('muted',              c('tog-muted') ? 'true' : 'false');
+      params.set('sash_length_ratio',  n('cfg-sash-length').toFixed(2));
+      params.set('sash_height_ratio',  n('cfg-sash-height').toFixed(3));
     }
   }
   // sash_priority is consumed not just by the diagonal sash but also by:
@@ -2933,6 +2988,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       // badge_gap only applies to Quality Badge Row mode
       params.set('badge_gap', ni('cfg-badge-gap'));
     }
+  }
+  if (c('tog-wait-quality') && [1,2,4].includes(badgeMode)) {
+    params.set('wait_for_quality', 'true');
   }
 
   const finalUrl = `${domain}/poster?${params.toString()}`;
@@ -3069,6 +3127,7 @@ function updateSashBadgeFields() {
   const isBadge = c('tog-sash-badge');
   document.getElementById('sash-muted-row').style.display     = isBadge ? 'none' : '';
   document.getElementById('sash-badge-offsets').style.display = isBadge ? '' : 'none';
+  document.getElementById('sash-size-fields').style.display   = isBadge ? 'none' : '';
   if (isBadge) initCustomMobileSliders();
 }
 
@@ -3204,7 +3263,8 @@ function importUrl(urlStr) {
   if (rawType && !rawType.startsWith('{')) mediaType      = rawType;
 
   // ── Logo language ───────────────────────────────────────────────────────
-  if (p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
+  if (p.has('logo_language'))        _setEl('cfg-language',             p.get('logo_language'));
+  if (p.has('logo_native_fallback')) _setEl('cfg-logo-native-fallback', p.get('logo_native_fallback'));
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
     let _tg = (p.get('top_gradient') || '').toLowerCase();
@@ -3220,10 +3280,12 @@ function importUrl(urlStr) {
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('show_award_sash')) _setEl('tog-award-sash',    p.get('show_award_sash'));
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
-  if (p.has('sash_badge'))      _setEl('tog-sash-badge',    p.get('sash_badge'));
-  if (p.has('sash_badge_x'))    _setEl('cfg-sash-badge-x',     p.get('sash_badge_x'));
-  if (p.has('sash_badge_y'))    _setEl('cfg-sash-badge-y',     p.get('sash_badge_y'));
-  if (p.has('sash_badge_size')) _setEl('cfg-sash-badge-size',  p.get('sash_badge_size'));
+  if (p.has('sash_badge'))        _setEl('tog-sash-badge',       p.get('sash_badge'));
+  if (p.has('sash_badge_x'))      _setEl('cfg-sash-badge-x',     p.get('sash_badge_x'));
+  if (p.has('sash_badge_y'))      _setEl('cfg-sash-badge-y',     p.get('sash_badge_y'));
+  if (p.has('sash_badge_size'))   _setEl('cfg-sash-badge-size',  p.get('sash_badge_size'));
+  if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
+  if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   updateSashBadgeFields();
 
   if (p.has('sash_priority')) {
@@ -3274,6 +3336,7 @@ function importUrl(urlStr) {
   if (p.has('badge_gap'))          _setEl('cfg-badge-gap', p.get('badge_gap'));
   if (p.has('badge_anchor_x'))     _setEl('cfg-badge-x',  p.get('badge_anchor_x'));
   if (p.has('badge_anchor_y'))     _setEl('cfg-badge-y',  p.get('badge_anchor_y'));
+  if (p.has('wait_for_quality'))   _setEl('tog-wait-quality', p.get('wait_for_quality'));
 
   // ── Rating weights ──────────────────────────────────────────────────────
   function applyWeights(paramName, containerId, sources) {

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import httpx
 
@@ -163,6 +164,188 @@ async def fetch_quality_from_aiostreams(
 
     except Exception as exc:
         logger.error(f"AIOStreams fetch error for {imdb_id}: {type(exc).__name__}: {exc}")
+        return FETCH_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Stremio addon scraper (simplified quality source)
+# ---------------------------------------------------------------------------
+# Users who find AIOStreams complex can point PostersPlus directly at any
+# Stremio addon that supports the stream endpoint — Torrentio, Comet, etc.
+# They paste the manifest URL (or install link) from their configured addon
+# page; PostersPlus derives the stream base URL and calls it like a regular
+# Stremio addon client.
+
+
+def _normalize_scraper_url(url: str) -> str:
+    """Normalise a user-pasted Stremio addon URL to a bare base URL."""
+    url = url.strip()
+    # stremio:// install links → https://
+    if url.startswith("stremio://"):
+        url = "https://" + url[10:]
+    # Strip /manifest.json suffix
+    if url.endswith("/manifest.json"):
+        url = url[: -len("/manifest.json")]
+    return url.rstrip("/")
+
+
+def _tokens_from_stremio_stream(
+    name: str,
+    title: str,
+    behavior_hints: dict | None = None,
+) -> set[str]:
+    """
+    Extract quality tokens from a single Stremio stream's name + title fields,
+    plus optional behaviorHints (Torrentio-style).
+
+    Stremio addons embed quality in either field; we scan both to be safe.
+    The name field typically looks like "Torrentio\\n4K DV" or "Comet\\n1080p".
+    The title field is usually a filename like "Movie.2023.2160p.WEB-DL.Atmos.mkv".
+
+    Torrentio also provides richer structured data in behaviorHints:
+      - bingeGroup: "torrentio|4k|BluRay REMUX|HDR"  (pipe-separated quality tokens)
+      - filename:   "Movie.2023.BDREMUX.2160p.HDR.mkv" (clean release filename)
+    Including these fields improves detection accuracy for Torrentio responses.
+    """
+    binge_group = ""
+    filename = ""
+    if behavior_hints:
+        binge_group = behavior_hints.get("bingeGroup") or ""
+        filename    = behavior_hints.get("filename") or ""
+    text = f"{name}\n{title}\n{binge_group}\n{filename}".upper()
+    tokens: set[str] = set()
+
+    # Resolution
+    if re.search(r'\b(2160P|4K|UHD)\b', text):
+        tokens.add("4K")
+    elif "1080P" in text:
+        tokens.add("1080P")
+
+    # HDR — order matters: check DV before HDR10+ before HDR10
+    if re.search(r'\bDV\b|DOLBY.?VISION|\bDOVI\b', text):
+        tokens.add("DV")
+    if "HDR10+" in text:
+        tokens.add("HDR10+")
+    elif re.search(r'\bHDR10\b|\bHDR\b', text):
+        tokens.add("HDR10")
+
+    # Source
+    if "REMUX" in text:
+        tokens.add("REMUX")
+    elif re.search(r'WEB.?DL|WEBDL', text):
+        tokens.add("WEBDL")
+
+    # Audio
+    if "ATMOS" in text:
+        tokens.add("ATMOS")
+    if re.search(r'DTS.?X\b', text):
+        tokens.add("DTSX")
+
+    return tokens
+
+
+async def fetch_quality_from_scraper(
+    client: httpx.AsyncClient,
+    scraper_url: str,
+    imdb_id: str,
+    media_type: str = "movie",
+    season: int = 1,
+    episode: int = 1,
+    release_date: str | None = None,
+) -> "list[str] | _FetchFailed":
+    """
+    Fetch quality tokens from a user-configured Stremio addon.
+
+    ``scraper_url`` should be the addon's manifest URL or base URL — e.g.
+    ``https://torrentio.stremio.ru/{config}/manifest.json`` or the bare
+    base.  Both forms are normalised before use.
+
+    Returns a list of quality tokens on success, or ``FETCH_FAILED`` on a
+    network / API error.  The caller is responsible for checking the quality
+    cache before calling this function; this function only writes on success.
+    """
+    base = _normalize_scraper_url(scraper_url)
+    if not base:
+        return []
+
+    is_series = media_type in ("tv", "series")
+    if is_series:
+        stream_type = "series"
+        stream_id   = f"{imdb_id}:{season}:{episode}"
+    else:
+        stream_type = "movie"
+        stream_id   = imdb_id
+
+    url = f"{base}/stream/{stream_type}/{stream_id}.json"
+
+    try:
+        logger.info(f"External API Call: Stremio scraper quality fetch for {imdb_id} → {url}")
+        resp = await client.get(url, timeout=20.0, follow_redirects=True)
+
+        if resp.status_code != 200:
+            logger.warning(
+                f"Scraper returned {resp.status_code} for {imdb_id} "
+                f"(url={url})"
+            )
+            # For series, fall back to a show-level lookup (no season/episode).
+            # Some addons support this and it avoids failures when a specific
+            # episode isn't indexed yet.
+            if is_series:
+                fallback_url = f"{base}/stream/series/{imdb_id}.json"
+                logger.info(
+                    f"Trying show-level series fallback for {imdb_id} → {fallback_url}"
+                )
+                resp = await client.get(fallback_url, timeout=20.0, follow_redirects=True)
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"Scraper series fallback also returned {resp.status_code} "
+                        f"for {imdb_id}"
+                    )
+                    return FETCH_FAILED
+            else:
+                return FETCH_FAILED
+
+        streams = resp.json().get("streams") or []
+
+        if not streams:
+            logger.info(f"Scraper returned no streams for {imdb_id} — caching empty result")
+            tokens: list[str] = []
+            set_cached_quality(imdb_id, tokens, release_date)
+            return tokens
+
+        # Aggregate tokens across the top 5 streams (same logic as AIOStreams).
+        seen: set[str] = set()
+        for stream in streams[:5]:
+            seen |= _tokens_from_stremio_stream(
+                stream.get("name") or "",
+                stream.get("title") or stream.get("description") or "",
+                stream.get("behaviorHints"),
+            )
+
+        tokens = []
+        for res in ("4K", "1080P"):
+            if res in seen:
+                tokens.append(res)
+                break
+        for source in ("REMUX", "WEBDL"):
+            if source in seen:
+                tokens.append(source)
+                break
+        for visual in ("DV", "HDR10+", "HDR10"):
+            if visual in seen:
+                tokens.append(visual)
+                break
+        for audio in ("ATMOS", "DTSX"):
+            if audio in seen:
+                tokens.append(audio)
+                break
+
+        logger.info(f"Scraper quality for {imdb_id}: {tokens}")
+        set_cached_quality(imdb_id, tokens, release_date)
+        return tokens
+
+    except Exception as exc:
+        logger.error(f"Scraper fetch error for {imdb_id}: {type(exc).__name__}: {exc}")
         return FETCH_FAILED
 
 

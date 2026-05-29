@@ -31,9 +31,9 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 
 - **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, newly streaming (release-date recency plus r/movieleaks tracking), cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Optional Badge Style render with adjustable X/Y position.
 
-- **Quality badges** - five display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Age Rating Only, or hidden. Sourced from an AIOStreams integration and fetched in the background on first request.
+- **Quality badges** - five display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Age Rating Only, or hidden. Sourced from either an AIOStreams integration or any Stremio stream addon (Torrentio, Comet, etc.) and fetched in the background on first request.
 
-- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference falls back through requested → English → language-neutral. Optional Textless toggle skips the logo entirely for clients that render the title separately.
+- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference falls back through requested → content's original language → language-neutral → English → Metahub CDN. When no logo exists in the preferred language you can choose between showing the native-language logo or rendering the translated title as text. Optional Textless toggle skips the logo entirely for clients that render the title separately.
 
 - **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is centre-cropped to portrait; when no poster art exists at all, a genre-tinted gradient canvas is generated with the title text. 
 
@@ -51,7 +51,9 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 - A free [TMDB API key](https://www.themoviedb.org/settings/api) for posters, logos and metadata.
 - A free [MDBList API key](https://mdblist.com/) for ratings and keywords.
 - An [AIOMetadata](https://github.com/cedya77/aiometadata) config. Self hosted or public instance are both fine.
-- An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance, optionally used for quality badges.
+- A quality source for quality badges — choose **one** of:
+  - An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance (set `AIOSTREAMS_URL` + `AIOSTREAMS_AUTH`), **or**
+  - Any Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's manifest/base URL). Quality badges are optional — both sources can be left unconfigured.
 
 ---
 
@@ -114,8 +116,10 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `MDBLIST_API_KEY` | - | MDBList API key for ratings and award data |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
 | `WORKERS` | `2` | Number of Uvicorn worker processes |
-| `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance |
+| `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
 | `AIOSTREAMS_AUTH` | - | AIOStreams credentials as Base64 `user:password` |
+| `QUALITY_SOURCE` | `aiostreams` | Quality data source: `aiostreams` or `scraper`. Set to `scraper` to use any Stremio stream addon instead of AIOStreams |
+| `SCRAPER_URL` | - | Manifest or base URL of a Stremio stream addon (e.g. `https://torrentio.strem.fun/providers=yts/manifest.json`). Only used when `QUALITY_SOURCE=scraper` |
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |

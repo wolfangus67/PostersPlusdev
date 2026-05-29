@@ -21,6 +21,15 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 ACCESS_KEY            = os.environ.get("ACCESS_KEY")
 AIOSTREAMS_URL        = os.environ.get("AIOSTREAMS_URL", "")
 AIOSTREAMS_AUTH       = os.environ.get("AIOSTREAMS_AUTH", "")
+
+# Quality source selection.
+# QUALITY_SOURCE: "aiostreams" (default) or "scraper".
+# SCRAPER_URL:    Stremio addon manifest/base URL — only used when QUALITY_SOURCE=scraper.
+#                 Example: https://torrentio.stremio.ru/{config}/manifest.json
+# Setting QUALITY_SOURCE=scraper while AIOSTREAMS_URL/AUTH are also set is a
+# misconfiguration — the scraper path is ignored and a warning is logged at startup.
+QUALITY_SOURCE        = os.environ.get("QUALITY_SOURCE", "aiostreams").lower().strip()
+SCRAPER_URL           = os.environ.get("SCRAPER_URL", "").strip()
 SERVER_TMDB_KEY       = os.environ.get("TMDB_API_KEY", "").strip()
 SERVER_MDBLIST_KEY    = os.environ.get("MDBLIST_API_KEY", "").strip()
 
@@ -88,6 +97,11 @@ QUALITY_OLD_CACHE_DURATION   = int(os.environ.get("QUALITY_OLD_CACHE_DURATION", 
 # Max concurrent background quality fetches.  Caps the burst when many uncached
 # titles scroll into view simultaneously so AIOStreams isn't overwhelmed.
 QUALITY_BG_CONCURRENCY       = int(os.environ.get("QUALITY_BG_CONCURRENCY", "5"))
+
+# Seconds to wait for a quality fetch when wait_for_quality=true is requested.
+# Should be generous enough to allow for slow scrapers (Torrentio, Comet) but
+# not so long it stalls a poster-warm run indefinitely.
+QUALITY_WAIT_TIMEOUT         = float(os.environ.get("QUALITY_WAIT_TIMEOUT", "30"))
 
 # Max concurrent outbound MDBlist API calls.  MDBlist queues or drops requests
 # when hit with too many simultaneous connections from the same key, causing

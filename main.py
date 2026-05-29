@@ -167,7 +167,7 @@ async def _background_quality_fetch(
     episode: int,
     release_date: str | None,
 ) -> None:
-    """Fetch quality tokens from AIOStreams and cache them.  Never raises."""
+    """Fetch quality tokens from the configured quality source and cache them.  Never raises."""
     global _quality_bg_semaphore
     if _quality_bg_semaphore is None:
         _quality_bg_semaphore = asyncio.Semaphore(_cfg.QUALITY_BG_CONCURRENCY)
@@ -175,10 +175,16 @@ async def _background_quality_fetch(
         async with _quality_bg_semaphore:
             if _HTTP_CLIENT is None:
                 return
-            await _with_retry(
-                fetch_quality_from_aiostreams,
-                _HTTP_CLIENT, imdb_id, media_type, season, episode, release_date,
-            )
+            if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
+                await _with_retry(
+                    fetch_quality_from_scraper,
+                    _HTTP_CLIENT, _cfg.SCRAPER_URL, imdb_id, media_type, season, episode, release_date,
+                )
+            else:
+                await _with_retry(
+                    fetch_quality_from_aiostreams,
+                    _HTTP_CLIENT, imdb_id, media_type, season, episode, release_date,
+                )
             logger.info(f"Background quality fetch complete for {imdb_id}")
     except Exception as exc:
         logger.warning(f"Background quality fetch failed for {imdb_id}: {exc}")
@@ -211,6 +217,7 @@ from discovery import (
 from quality import (
     BadgeItem,
     fetch_quality_from_aiostreams,
+    fetch_quality_from_scraper,
     get_resized_badge,
     parse_quality,
     render_badges_left,
@@ -241,7 +248,14 @@ def _make_http_client() -> httpx.AsyncClient:
             max_keepalive_connections=20,
             keepalive_expiry=30,
         ),
-        headers={"Accept-Encoding": "identity"},
+        headers={
+            "Accept-Encoding": "identity",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        },
         http2=False,   # most poster APIs don't support h2; skip the negotiation
     )
 
@@ -345,6 +359,11 @@ class RequestConfig:
     tv_weights:    dict | None = None
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
+    # When True (default): fall through to the content's original-language logo
+    # when no preferred-language logo exists (e.g. "La Cena" for a Spanish film).
+    # When False: skip native-language logos and let the text-title fallback render
+    # the translated title instead (e.g. "The Dinner").
+    logo_native_fallback: bool = True
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
     muted: bool = False
     textless: bool = False
@@ -355,6 +374,9 @@ class RequestConfig:
     sash_badge_x:    float = 0.62   # badge left-edge as fraction of poster width (flush right with the corner)
     sash_badge_y:    float = 0.04   # badge top-edge  as fraction of poster height
     sash_badge_size: float = 1.0    # uniform scale of badge dimensions (1.0 = default footprint)
+    sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
+    sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
+    wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
@@ -455,6 +477,9 @@ def build_request_config(params: dict) -> RequestConfig:
     # Capped at 1.5× — beyond that the badge would auto-displace via the
     # in-renderer clamp at the default x position, which is confusing UX.
     cfg.sash_badge_size         = _f("sash_badge_size",        cfg.sash_badge_size,        0.5, 1.5)
+    cfg.sash_length_ratio       = _f("sash_length_ratio",      cfg.sash_length_ratio,      0.8, 1.5)
+    cfg.sash_height_ratio       = _f("sash_height_ratio",      cfg.sash_height_ratio,      0.06, 0.20)
+    cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   2)
     cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   4)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode,    0,   4)
@@ -503,8 +528,9 @@ def build_request_config(params: dict) -> RequestConfig:
     tv_sources = list(_cfg.TV_WEIGHTS.keys())
     cfg.tv_weights = _parse_weights(params.get("tv_weights"), tv_sources)
 
-    cfg.logo_language = (params.get("logo_language", cfg.logo_language).strip().lower())
-    cfg.sash_priority = _parse_sash_priority(params.get("sash_priority"))
+    cfg.logo_language        = (params.get("logo_language", cfg.logo_language).strip().lower())
+    cfg.logo_native_fallback = _b("logo_native_fallback", cfg.logo_native_fallback)
+    cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
 
     return cfg
 
@@ -1002,7 +1028,9 @@ def build_poster(
                                      y_ratio=cfg.sash_badge_y,
                                      size_ratio=cfg.sash_badge_size)
         else:
-            image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted)
+            image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted,
+                                    length_ratio=cfg.sash_length_ratio,
+                                    height_ratio=cfg.sash_height_ratio)
 
     return image
 
@@ -1041,6 +1069,17 @@ async def lifespan(app: FastAPI):
                 f"{_cfg.COMPOSITE_CACHE_TTL / 86400:.1f}d)")
     _HTTP_CLIENT = _make_http_client()
     logger.info("HTTP client initialised")
+    # Warn on quality source misconfiguration
+    if _cfg.QUALITY_SOURCE == "scraper" and (bool(_cfg.AIOSTREAMS_URL) or bool(_cfg.AIOSTREAMS_AUTH)):
+        logger.warning(
+            "QUALITY_SOURCE=scraper but AIOSTREAMS_URL/AIOSTREAMS_AUTH are also set — "
+            "scraper will be used; AIOSTREAMS settings are ignored. "
+            "Unset AIOSTREAMS_URL and AIOSTREAMS_AUTH to silence this warning."
+        )
+    if _cfg.QUALITY_SOURCE == "scraper" and not _cfg.SCRAPER_URL:
+        logger.warning("QUALITY_SOURCE=scraper but SCRAPER_URL is not set — quality fetching is disabled.")
+    if _cfg.QUALITY_SOURCE not in ("aiostreams", "scraper"):
+        logger.warning(f"Unknown QUALITY_SOURCE={_cfg.QUALITY_SOURCE!r} — defaulting to aiostreams behaviour.")
     _configurator_html = _load_configurator_html()
     prune_task   = asyncio.create_task(_cache_prune_loop())
     digital_task = asyncio.create_task(digital_release_poll_loop(_HTTP_CLIENT))
@@ -1082,6 +1121,10 @@ async def server_caps(access_key: str = ""):
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
         "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEY),
         "aiostreams_configured": bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH),
+        "quality_configured":    (
+            bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
+            or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
+        ),
     }
 
 
@@ -1474,16 +1517,23 @@ async def get_poster(
         cached_tokens  = get_cached_quality(imdb_id, release_date_for_quality_ttl)
         quality_tokens = cached_tokens or []
 
+    # A quality source is available when the server has AIOStreams configured,
+    # or QUALITY_SOURCE=scraper with a valid SCRAPER_URL.
+    _has_quality_source = (
+        bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
+        or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
+    )
     quality_needs_fetch = (
         rcfg.badge_display_mode in (1, 2, 4)
         and not quality
         and cached_tokens is None
+        and _has_quality_source
     )
 
-    # If quality needs fetching, fire it in the background and serve the poster
-    # immediately without badges.  The cache will be warm on the next request.
     quality_pending = False
-    if quality_needs_fetch:
+    if quality_needs_fetch and not rcfg.wait_for_quality:
+        # Fire-and-forget background fetch — poster is served immediately
+        # without badges; the cache will be warm on the next request.
         if imdb_id not in _quality_bg_inflight:
             _quality_bg_inflight.add(imdb_id)
             asyncio.create_task(
@@ -1580,10 +1630,55 @@ async def get_poster(
             trending_rank,
         ) = await asyncio.gather(
             _image_coro,
-            fetch_logo(client, logos, rcfg.logo_language, imdb_id=imdb_id) if (is_textless and not is_no_poster) else _resolved(None),
+            fetch_logo(client, logos, rcfg.logo_language, imdb_id=imdb_id, original_language=tmdb_data.get("original_language"), skip_native=not rcfg.logo_native_fallback) if (is_textless and not is_no_poster) else _resolved(None),
             rating_coro,
             fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )
+
+        # Release the rating inflight event early — the rating is now cached so
+        # any coalesced requests can proceed without waiting for the quality fetch.
+        if _rating_event_to_set is not None:
+            _rating_event_to_set.set()
+            _rating_fetch_inflight.pop(imdb_id, None)
+            _rating_event_to_set = None   # prevent redundant set in finally block
+
+        # Inline quality wait — runs after gather so rating coalescing is never
+        # blocked.  Used for poster-warm workflows where latency doesn't matter.
+        if quality_needs_fetch and rcfg.wait_for_quality:
+            async def _inline_fetch():
+                if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
+                    return await _with_retry(
+                        fetch_quality_from_scraper,
+                        client, _cfg.SCRAPER_URL,
+                        imdb_id, type, season, episode, release_date_for_quality_ttl,
+                    )
+                return await _with_retry(
+                    fetch_quality_from_aiostreams,
+                    client, imdb_id, type, season, episode, release_date_for_quality_ttl,
+                )
+            try:
+                fetched = await asyncio.wait_for(
+                    _inline_fetch(), timeout=_cfg.QUALITY_WAIT_TIMEOUT
+                )
+                if fetched is not FETCH_FAILED:
+                    quality_tokens = fetched
+                    logger.info(f"Inline quality fetch complete for {imdb_id}: {quality_tokens}")
+                else:
+                    # AIOStreams/scraper returned a transient error — don't cache
+                    # the composite poster without quality so the next request retries.
+                    logger.warning(
+                        f"Inline quality fetch failed for {imdb_id} "
+                        "— serving without quality, composite not cached"
+                    )
+                    quality_pending = True
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Quality wait timed out for {imdb_id} "
+                    f"after {_cfg.QUALITY_WAIT_TIMEOUT:.0f}s — serving without quality, "
+                    "composite not cached so next request retries"
+                )
+                quality_pending = True
+            quality_needs_fetch = False
 
         # ------------------------------------------------------------------
         # Unpack results
@@ -1862,8 +1957,9 @@ async def get_poster(
         logger.exception(f"Error building poster for tmdb_id={tmdb_id}")
         raise HTTPException(status_code=500, detail="Failed to build poster")
     finally:
-        # Always fire the rating event so any coalesced waiters unblock,
-        # regardless of whether the fetch succeeded or failed.
+        # Fire the rating event so any coalesced waiters unblock.  Under normal
+        # operation this was already set early (after gather); this is the
+        # safety net for error paths where we exit before reaching that point.
         if _rating_event_to_set is not None:
             _rating_event_to_set.set()
             _rating_fetch_inflight.pop(imdb_id, None)
