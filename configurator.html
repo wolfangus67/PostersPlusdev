@@ -1831,69 +1831,66 @@
             </div>
             <div class="toggle-row" style="margin-bottom:14px;">
               <div>
-                <div class="toggle-label">Badge Style</div>
-                <div class="field-hint">Render as a badge instead of a diagonal sash.</div>
+                <div class="toggle-label">Notch Badge</div>
+                <div class="field-hint">Centred notch badge instead of a diagonal sash. Adjust inset to suit your client.</div>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-sash-badge" onchange="onBadgeToggle()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
-            <!-- Badge position — only shown when Badge Style is ON -->
+            <!-- Badge options — only shown when Notch Badge is ON -->
             <div id="sash-badge-offsets" style="display:none; margin-bottom:14px;">
-              <div class="toggle-row">
-                <div>
-                  <div class="toggle-label">Filled</div>
-                  <div class="field-hint" style="margin-top:2px;">Fill the badge with the sash colour; the border becomes a deeper shade of the same colour to frame it.</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-sash-badge-filled" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" style="margin-top:10px; margin-bottom:14px;">
-                <div>
-                  <div class="toggle-label">Notch</div>
-                  <div class="field-hint" style="margin-top:2px;">Needs manual user adjustment based on client.</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-sash-badge-notch" onchange="onNotchToggle()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="field">
-                <label class="field-label">Horizontal Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-x" min="0.00" max="0.99" step="0.01" value="0.60" oninput="updateRange(this,'rng-sbx'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbx">0.60</span>
-                </div>
+                <label class="field-label">Style</label>
+                <select id="cfg-sash-badge-style" onchange="updateBadgeStyleFields(); build(); queuePreviewReload()" style="width:100%; padding:6px 8px; border-radius:6px; background:#1e1e1e; color:#e0e0e0; border:1px solid #444;">
+                  <option value="frosted" selected>Frosted</option>
+                  <option value="silver">Black + Silver</option>
+                  <option value="gold">Black + Gold</option>
+                </select>
               </div>
-              <div class="field" id="sash-badge-y-field">
-                <label class="field-label">Vertical Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-y" min="0.00" max="0.90" step="0.01" value="0.04" oninput="updateRange(this,'rng-sby'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sby">0.04</span>
-                </div>
-              </div>
-              <div class="field">
+              <div class="field" style="margin-top:10px;">
                 <label class="field-label">Width</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-size-w" min="0.50" max="2" step="0.05" value="1.05" oninput="updateRange(this,'rng-sbsw'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbsw">1.05</span>
+                  <input type="range" id="cfg-sash-badge-size-w" min="0.50" max="2" step="0.05" value="1.40" oninput="updateRange(this,'rng-sbsw'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbsw">1.40</span>
                 </div>
               </div>
               <div class="field">
                 <label class="field-label">Height</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-size-h" min="0.50" max="2" step="0.05" value="1.05" oninput="updateRange(this,'rng-sbsh'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbsh">1.05</span>
+                  <input type="range" id="cfg-sash-badge-size-h" min="0.50" max="2" step="0.05" value="1.20" oninput="updateRange(this,'rng-sbsh'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbsh">1.20</span>
                 </div>
               </div>
-              <div class="field" id="sash-badge-notch-offset-field" style="display:none;">
-                <label class="field-label">Text Vertical Offset</label>
+              <div class="field">
+                <label class="field-label">Inset</label>
+                <div class="field-hint" style="margin-bottom:4px;">Clients crop differently — adjust as required, won't match preview.</div>
                 <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-notch-offset" min="-0.5" max="0.5" step="0.01" value="0.03" oninput="updateRange(this,'rng-sbno'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbno">0.03</span>
+                  <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.010" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbi">0.010</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Text Vertical Offset</label>
+                <div class="field-hint" style="margin-bottom:4px;">Clients crop differently — adjust as required, won't match preview.</div>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-notch-offset" min="-0.5" max="0.5" step="0.01" value="0.00" oninput="updateRange(this,'rng-sbno'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbno">0.00</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Font Size Ratio</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-font-ratio" min="0.10" max="1.00" step="0.01" value="0.43" oninput="updateRange(this,'rng-sbfr'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbfr">0.43</span>
+                </div>
+              </div>
+              <div class="field" id="sash-badge-opacity-field" style="display:none;">
+                <label class="field-label">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-sbfo'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbfo">0.75</span>
                 </div>
               </div>
             </div>
@@ -2989,14 +2986,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     params.set('sash_badge', isBadge ? 'true' : 'false');
     if (isBadge) {
       // Muted is not compatible with badge style — omit it from URL
-      params.set('sash_badge_x',      n('cfg-sash-badge-x').toFixed(2));
-      params.set('sash_badge_y',      n('cfg-sash-badge-y').toFixed(2));
-      params.set('sash_badge_size_w', n('cfg-sash-badge-size-w').toFixed(2));
-      params.set('sash_badge_size_h', n('cfg-sash-badge-size-h').toFixed(2));
-      params.set('sash_badge_filled', c('tog-sash-badge-filled') ? 'true' : 'false');
-      params.set('sash_badge_notch',  c('tog-sash-badge-notch')  ? 'true' : 'false');
-      if (c('tog-sash-badge-notch'))
-        params.set('sash_badge_notch_offset', n('cfg-sash-badge-notch-offset').toFixed(2));
+      params.set('sash_badge_style',         vEl('cfg-sash-badge-style') || 'silver');
+      params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
+      params.set('sash_badge_size_h',        n('cfg-sash-badge-size-h').toFixed(2));
+      params.set('sash_badge_inset',         n('cfg-sash-badge-inset').toFixed(3));
+      params.set('sash_badge_notch_offset',  n('cfg-sash-badge-notch-offset').toFixed(2));
+      params.set('sash_badge_font_ratio',    n('cfg-sash-badge-font-ratio').toFixed(2));
+      if (vEl('cfg-sash-badge-style') === 'frosted')
+        params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
     } else {
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_length_ratio',  n('cfg-sash-length').toFixed(2));
@@ -3165,55 +3162,19 @@ function updateSashBadgeFields() {
   document.getElementById('sash-muted-row').style.display     = isBadge ? 'none' : '';
   document.getElementById('sash-badge-offsets').style.display = isBadge ? '' : 'none';
   document.getElementById('sash-size-fields').style.display   = isBadge ? 'none' : '';
-  if (isBadge) {
-    initCustomMobileSliders();
-    _applyNotchState(false);  // sync hide/show without resetting X
-  }
+  if (isBadge) { initCustomMobileSliders(); updateBadgeStyleFields(); }
 }
 
 function onBadgeToggle() {
-  const isBadge = c('tog-sash-badge');
-  const notchOn = c('tog-sash-badge-notch');
-  if (isBadge && !notchOn) {
-    // Apply badge (non-notch) defaults
-    const xEl = document.getElementById('cfg-sash-badge-x');
-    xEl.value = '0.60'; updateRange(xEl, 'rng-sbx');
-    const yEl = document.getElementById('cfg-sash-badge-y');
-    yEl.value = '0.04'; updateRange(yEl, 'rng-sby');
-    const wEl = document.getElementById('cfg-sash-badge-size-w');
-    wEl.value = '1.05'; updateRange(wEl, 'rng-sbsw');
-    const hEl = document.getElementById('cfg-sash-badge-size-h');
-    hEl.value = '1.05'; updateRange(hEl, 'rng-sbsh');
-  }
   updateSashBadgeFields();
+  updateBadgeStyleFields();
   build();
   queuePreviewReload();
 }
 
-function onNotchToggle() {
-  const notchOn = c('tog-sash-badge-notch');
-  _applyNotchState(notchOn);  // when user clicks, auto-centre X if enabling
-  build();
-  queuePreviewReload();
-}
-
-function _applyNotchState(autoCentre) {
-  const notchOn = c('tog-sash-badge-notch');
-  document.getElementById('sash-badge-y-field').style.display            = notchOn ? 'none' : '';
-  document.getElementById('sash-badge-notch-offset-field').style.display = notchOn ? ''     : 'none';
-  if (autoCentre && notchOn) {
-    // Apply notch-optimised defaults
-    const wEl = document.getElementById('cfg-sash-badge-size-w');
-    wEl.value = '1.40'; updateRange(wEl, 'rng-sbsw');
-    const hEl = document.getElementById('cfg-sash-badge-size-h');
-    hEl.value = '1.20'; updateRange(hEl, 'rng-sbsh');
-    const oEl = document.getElementById('cfg-sash-badge-notch-offset');
-    oEl.value = '0.03'; updateRange(oEl, 'rng-sbno');
-    // Centre X for width 1.4
-    const centreX = ((1.0 - 0.34 * 1.4) / 2).toFixed(2);
-    const xEl = document.getElementById('cfg-sash-badge-x');
-    xEl.value = centreX; updateRange(xEl, 'rng-sbx');
-  }
+function updateBadgeStyleFields() {
+  const isFrosted = vEl('cfg-sash-badge-style') === 'frosted';
+  document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
 }
 
 function updateRatingFields() {
@@ -3365,14 +3326,14 @@ function importUrl(urlStr) {
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('show_award_sash')) _setEl('tog-award-sash',    p.get('show_award_sash'));
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
-  if (p.has('sash_badge'))        _setEl('tog-sash-badge',        p.get('sash_badge'));
-  if (p.has('sash_badge_x'))      _setEl('cfg-sash-badge-x',      p.get('sash_badge_x'));
-  if (p.has('sash_badge_y'))      _setEl('cfg-sash-badge-y',      p.get('sash_badge_y'));
-  if (p.has('sash_badge_size_w')) _setEl('cfg-sash-badge-size-w', p.get('sash_badge_size_w'));
-  if (p.has('sash_badge_size_h')) _setEl('cfg-sash-badge-size-h', p.get('sash_badge_size_h'));
-  if (p.has('sash_badge_filled')) _setEl('tog-sash-badge-filled', p.get('sash_badge_filled'));
-  if (p.has('sash_badge_notch'))        _setEl('tog-sash-badge-notch',        p.get('sash_badge_notch'));
-  if (p.has('sash_badge_notch_offset')) _setEl('cfg-sash-badge-notch-offset', p.get('sash_badge_notch_offset'));
+  if (p.has('sash_badge'))               _setEl('tog-sash-badge',              p.get('sash_badge'));
+  if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
+  if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
+  if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
+  if (p.has('sash_badge_inset'))         _setEl('cfg-sash-badge-inset',        p.get('sash_badge_inset'));
+  if (p.has('sash_badge_notch_offset'))  _setEl('cfg-sash-badge-notch-offset',  p.get('sash_badge_notch_offset'));
+  if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
+  if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   updateSashBadgeFields();
