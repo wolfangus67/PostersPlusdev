@@ -1303,11 +1303,16 @@ def draw_award_badge(
     x_ratio: float = 0.62,   # left edge of badge as fraction of poster width (flush right)
     y_ratio: float = 0.04,   # top  edge of badge as fraction of poster height
     size_ratio: float = 1.0, # multiplier on the badge's default (height + width) — keeps aspect
+    filled: bool = False,    # fill the badge body with the sash colour; border becomes black
 ) -> Image.Image:
     """
     Alternative to draw_award_sash: a compact rounded rectangle badge trimmed
     with the sash colour, placed in the top-right corner.  Same colour palette
     and label as the sash, no diagonal rotation.
+
+    When filled=True the body is filled with the sash colour (gradient from a
+    lighter tint at the top to a deeper shade at the bottom) and the border
+    switches to black, giving a bolder solid-colour look.
 
     Uses Cairo for the body + border (smooth sub-pixel antialiased corners and
     gradient fill) with a PIL text layer on top, then 3× LANCZOS downscale.
@@ -1341,7 +1346,7 @@ def draw_award_badge(
     badge_h  = int(height * 0.075 * size_ratio)
     badge_w  = int(width  * 0.34  * size_ratio)   # fixed-width across labels, scaled by size
     radius   = int(badge_h * 0.32)
-    border_w = max(1, int(badge_h * 0.055))
+    border_w = max(1, int(badge_h * (0.10 if filled else 0.055)))
 
     bh, bw = badge_h * SS, badge_w * SS
     r_ss   = radius   * SS
@@ -1355,6 +1360,17 @@ def draw_award_badge(
     # gets proper sub-pixel coverage, and LinearGradient for the body fill.
     # The stroke is inset by half its width so it stays inside the shape.
     badge: Image.Image | None = None
+
+    # Pre-compute filled-mode colour stops once (used by both Cairo and PIL).
+    # hi = 30 % brighter than the sash colour, lo = 40 % darker, giving a
+    # top-to-bottom gradient that keeps the badge readable at any size.
+    if filled:
+        fr, fg, fb  = border_rgb
+        fill_hi    = (min(255, int(fr * 1.30)), min(255, int(fg * 1.30)), min(255, int(fb * 1.30)))
+        fill_lo    = (int(fr * 0.60), int(fg * 0.60), int(fb * 0.60))
+        # Border is a near-match of the fill colour (0.90×) — just dark enough
+        # to frame the badge subtly without drawing attention to itself.
+        fill_frame = (int(fr * 0.90), int(fg * 0.90), int(fb * 0.90))
 
     if _HAS_CAIRO:
         try:
@@ -1375,23 +1391,41 @@ def draw_award_badge(
                 ctx.arc(x + r,     y + r,     r,  math.pi,      3 * math.pi / 2)
                 ctx.close_path()
 
-            # Dark gradient body (8 → 24 → 8 brightness, slight blue tint)
-            ba   = body_alpha / 255
-            d_lo = 8  / 255
-            d_hi = 24 / 255
-            grad = _cairo.LinearGradient(0, 0, 0, bh)
-            grad.add_color_stop_rgba(0.0, d_lo, d_lo, d_lo * 1.3, ba)
-            grad.add_color_stop_rgba(0.5, d_hi, d_hi, d_hi * 1.3, ba)
-            grad.add_color_stop_rgba(1.0, d_lo, d_lo, d_lo * 1.3, ba)
-            ctx.set_source(grad)
-            _rrect(0, 0, bw, bh, r_ss)
-            ctx.fill()
-
-            # Coloured border stroke, inset so it sits inside the body edge
-            br_c, bg_c, bb_c = border_rgb
-            ctx.set_source_rgba(br_c / 255, bg_c / 255, bb_c / 255, border_alpha / 255)
-            ctx.set_line_width(bw_ss)
+            ba    = body_alpha / 255
             inset = bw_ss / 2
+
+            if filled:
+                # Sash-colour gradient body: lighter tint at top, mid colour in
+                # the centre, deeper shade at the bottom.
+                hi_r, hi_g, hi_b = fill_hi
+                lo_r, lo_g, lo_b = fill_lo
+                fr_n, fg_n, fb_n = fr / 255, fg / 255, fb / 255
+                grad = _cairo.LinearGradient(0, 0, 0, bh)
+                grad.add_color_stop_rgba(0.0, hi_r / 255, hi_g / 255, hi_b / 255, ba)
+                grad.add_color_stop_rgba(0.5, fr_n, fg_n, fb_n, ba)
+                grad.add_color_stop_rgba(1.0, lo_r / 255, lo_g / 255, lo_b / 255, ba)
+                ctx.set_source(grad)
+                _rrect(0, 0, bw, bh, r_ss)
+                ctx.fill()
+                # Deeper-shade frame derived from the fill colour
+                ff_r, ff_g, ff_b = fill_frame
+                ctx.set_source_rgba(ff_r / 255, ff_g / 255, ff_b / 255, border_alpha / 255)
+            else:
+                # Dark gradient body (8 → 24 → 8 brightness, slight blue tint)
+                d_lo = 8  / 255
+                d_hi = 24 / 255
+                grad = _cairo.LinearGradient(0, 0, 0, bh)
+                grad.add_color_stop_rgba(0.0, d_lo, d_lo, d_lo * 1.3, ba)
+                grad.add_color_stop_rgba(0.5, d_hi, d_hi, d_hi * 1.3, ba)
+                grad.add_color_stop_rgba(1.0, d_lo, d_lo, d_lo * 1.3, ba)
+                ctx.set_source(grad)
+                _rrect(0, 0, bw, bh, r_ss)
+                ctx.fill()
+                # Coloured border stroke
+                br_c, bg_c, bb_c = border_rgb
+                ctx.set_source_rgba(br_c / 255, bg_c / 255, bb_c / 255, border_alpha / 255)
+
+            ctx.set_line_width(bw_ss)
             _rrect(inset, inset, bw - 2 * inset, bh - 2 * inset, max(1.0, r_ss - inset))
             ctx.stroke()
 
@@ -1418,12 +1452,26 @@ def draw_award_badge(
 
     if badge is None:
         # ── PIL fallback ──────────────────────────────────────────────────────
-        t        = np.linspace(0, 1, bh, dtype=np.float32)
-        darkness = (8 + 16 * np.sin(t * np.pi)).astype(np.uint8)
-        b_arr    = np.zeros((bh, bw, 4), dtype=np.uint8)
-        b_arr[:, :, 0] = darkness[:, np.newaxis]
-        b_arr[:, :, 1] = darkness[:, np.newaxis]
-        b_arr[:, :, 2] = np.minimum(255, (darkness * 1.3).astype(np.uint8))[:, np.newaxis]
+        t   = np.linspace(0, 1, bh, dtype=np.float32)
+        b_arr = np.zeros((bh, bw, 4), dtype=np.uint8)
+
+        if filled:
+            # Gradient from fill_hi → border_rgb → fill_lo top-to-bottom
+            for ch, (hi_c, mid_c, lo_c) in enumerate(zip(fill_hi, border_rgb, fill_lo)):
+                ramp = np.where(
+                    t < 0.5,
+                    hi_c  + (mid_c - hi_c)  * (t * 2),
+                    mid_c + (lo_c  - mid_c) * ((t - 0.5) * 2),
+                ).astype(np.uint8)
+                b_arr[:, :, ch] = ramp[:, np.newaxis]
+            border_outline = (*fill_frame, border_alpha)
+        else:
+            darkness = (8 + 16 * np.sin(t * np.pi)).astype(np.uint8)
+            b_arr[:, :, 0] = darkness[:, np.newaxis]
+            b_arr[:, :, 1] = darkness[:, np.newaxis]
+            b_arr[:, :, 2] = np.minimum(255, (darkness * 1.3).astype(np.uint8))[:, np.newaxis]
+            border_outline = (*border_rgb, border_alpha)
+
         b_arr[:, :, 3] = body_alpha
         body      = Image.fromarray(b_arr, "RGBA")
         body_mask = Image.new("L", (bw, bh), 0)
@@ -1435,7 +1483,7 @@ def draw_award_badge(
         ImageDraw.Draw(border_layer).rounded_rectangle(
             [(0, 0), (bw - 1, bh - 1)],
             radius=r_ss,
-            outline=(*border_rgb, border_alpha),
+            outline=border_outline,
             width=bw_ss,
         )
         badge = Image.alpha_composite(body, border_layer)
@@ -1453,8 +1501,15 @@ def draw_award_badge(
     txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     td = ImageDraw.Draw(txt_layer)
     tx, ty = _text_center(td, label, font, bw / 2, bh / 2)
-    td.text((tx + SS, ty + SS), label, font=font, fill=(0, 0, 0, 160))   # shadow
-    td.text((tx, ty),           label, font=font, fill=(225, 225, 225, 225))
+    # Filled badges use a stronger black shadow so white text pops against the
+    # sash colour; dark-body badges keep the subtler shadow.
+    if filled:
+        # Black text with a subtle white shadow for lift against the colour fill
+        td.text((tx + SS, ty + SS), label, font=font, fill=(255, 255, 255, 120))
+        td.text((tx, ty),           label, font=font, fill=(0, 0, 0, 245))
+    else:
+        td.text((tx + SS, ty + SS), label, font=font, fill=(0, 0, 0, 160))
+        td.text((tx, ty),           label, font=font, fill=(255, 255, 255, 235))
     badge = Image.alpha_composite(badge, txt_layer)
 
     # ── Downscale to final size ───────────────────────────────────────────────

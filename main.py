@@ -371,9 +371,10 @@ class RequestConfig:
     top_gradient:    str = "high"   # off | low | medium | high — strength of the top vignette
     bottom_gradient: str = "high"   # off | low | medium | high — strength of the bottom vignette
     sash_badge: bool = False   # True → badge style instead of diagonal sash
-    sash_badge_x:    float = 0.62   # badge left-edge as fraction of poster width (flush right with the corner)
-    sash_badge_y:    float = 0.04   # badge top-edge  as fraction of poster height
-    sash_badge_size: float = 1.0    # uniform scale of badge dimensions (1.0 = default footprint)
+    sash_badge_x:      float = 0.62   # badge left-edge as fraction of poster width (flush right with the corner)
+    sash_badge_y:      float = 0.04   # badge top-edge  as fraction of poster height
+    sash_badge_size:   float = 1.0    # uniform scale of badge dimensions (1.0 = default footprint)
+    sash_badge_filled: bool  = False  # fill badge body with sash colour; border becomes black
     sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
@@ -471,6 +472,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _bg_raw in _BOTTOM_GRADIENT_LEVELS:
         cfg.bottom_gradient = _bg_raw
     cfg.sash_badge              = _b("sash_badge",             cfg.sash_badge)
+    cfg.sash_badge_filled       = _b("sash_badge_filled",      cfg.sash_badge_filled)
     # Position ratios — full poster span so users can put the badge anywhere
     cfg.sash_badge_x            = _f("sash_badge_x",           cfg.sash_badge_x,           0.0, 1.0)
     cfg.sash_badge_y            = _f("sash_badge_y",           cfg.sash_badge_y,           0.0, 1.0)
@@ -1026,7 +1028,8 @@ def build_poster(
             image = draw_award_badge(image, label, sash_type=sash_type,
                                      x_ratio=cfg.sash_badge_x,
                                      y_ratio=cfg.sash_badge_y,
-                                     size_ratio=cfg.sash_badge_size)
+                                     size_ratio=cfg.sash_badge_size,
+                                     filled=cfg.sash_badge_filled)
         else:
             image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,
