@@ -53,7 +53,7 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 - An [AIOMetadata](https://github.com/cedya77/aiometadata) config. Self hosted or public instance are both fine.
 - A quality source for quality badges — choose **one** of:
   - An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance (set `AIOSTREAMS_URL` + `AIOSTREAMS_AUTH`), **or**
-  - Any Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's manifest/base URL). Quality badges are optional — both sources can be left unconfigured.
+  - Any standalone Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) or [Comet](https://comet.elfhosted.com) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's base URL, e.g. `https://torrentio.strem.fun/`). Note: Stremthru Torz requires authentication and won't work standalone — use it via AIOStreams instead. Quality badges are optional — both sources can be left unconfigured.
 
 ---
 
@@ -120,7 +120,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
 | `AIOSTREAMS_AUTH` | - | AIOStreams credentials as Base64 `user:password` |
 | `QUALITY_SOURCE` | `aiostreams` | Quality data source: `aiostreams` or `scraper`. Set to `scraper` to use any Stremio stream addon instead of AIOStreams |
-| `SCRAPER_URL` | - | Manifest or base URL of a Stremio stream addon (e.g. `https://torrentio.strem.fun/providers=yts/manifest.json`). Only used when `QUALITY_SOURCE=scraper` |
+| `SCRAPER_URL` | - | Base URL of a Stremio stream addon (e.g. `https://torrentio.strem.fun/`). Only used when `QUALITY_SOURCE=scraper`. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used via AIOStreams instead |
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |
