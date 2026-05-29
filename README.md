@@ -126,6 +126,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95). Raise to `92` for higher fidelity; lower to reduce file size |
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
+| `DISABLE_COMPOSITE_CACHE` | - | Set to `true` to skip composite cache reads and writes entirely. Every request re-renders from scratch. For development only |
 | `DEFAULT_LOGO_LANGUAGE` | `en` | ISO 639-1 language code for title logos |
 
 ---

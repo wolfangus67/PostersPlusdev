@@ -1214,6 +1214,26 @@ def parse_mdblist_awards(
 # Sash drawing  (unchanged from original)
 # ---------------------------------------------------------------------------
 
+def _load_font_fit(fonts_dir: str, font_name: str, font_size: int,
+                   label: str, max_w: int) -> ImageFont.ImageFont:
+    """Load font at font_size, then scale down if label exceeds max_w pixels."""
+    path = os.path.join(fonts_dir, font_name)
+    try:
+        font = ImageFont.truetype(path, font_size)
+    except IOError:
+        return ImageFont.load_default()
+    _tmp = ImageDraw.Draw(Image.new("L", (1, 1)))
+    bbox = _tmp.textbbox((0, 0), label, font=font)
+    text_w = bbox[2] - bbox[0]
+    if text_w > max_w:
+        font_size = max(8, int(font_size * max_w / text_w))
+        try:
+            font = ImageFont.truetype(path, font_size)
+        except IOError:
+            pass
+    return font
+
+
 def _text_center(
     draw: ImageDraw.ImageDraw,
     text: str,
@@ -1300,10 +1320,13 @@ def draw_award_badge(
     image: Image.Image,
     label: str,
     sash_type: str = "win",
-    x_ratio: float = 0.62,   # left edge of badge as fraction of poster width (flush right)
-    y_ratio: float = 0.04,   # top  edge of badge as fraction of poster height
-    size_ratio: float = 1.0, # multiplier on the badge's default (height + width) — keeps aspect
-    filled: bool = False,    # fill the badge body with the sash colour; border becomes black
+    x_ratio: float = 0.62,     # left edge of badge as fraction of poster width
+    y_ratio: float = 0.04,     # top  edge of badge as fraction of poster height
+    size_ratio_w: float = 1.0, # horizontal scale multiplier
+    size_ratio_h: float = 1.0, # vertical scale multiplier
+    filled: bool = False,      # fill the badge body with the sash colour
+    notch: bool = False,       # clip the top ~42% so badge emerges from the poster edge
+    notch_text_offset: float = 0.08,  # downward nudge as fraction of visible notch height
 ) -> Image.Image:
     """
     Alternative to draw_award_sash: a compact rounded rectangle badge trimmed
@@ -1339,12 +1362,8 @@ def draw_award_badge(
         border_rgb = (192, 192, 200)
 
     # ── Dimensions ───────────────────────────────────────────────────────────
-    # Both dimensions take the same multiplier so the badge keeps its aspect
-    # ratio — gives the user one knob without making them fight aspect drift.
-    # Radius, border thickness, and font size are all derived from badge_h
-    # below so they scale automatically with size_ratio.
-    badge_h  = int(height * 0.075 * size_ratio)
-    badge_w  = int(width  * 0.34  * size_ratio)   # fixed-width across labels, scaled by size
+    badge_h  = int(height * 0.075 * size_ratio_h)
+    badge_w  = int(width  * 0.34  * size_ratio_w)
     radius   = int(badge_h * 0.32)
     border_w = max(1, int(badge_h * (0.10 if filled else 0.055)))
 
@@ -1352,25 +1371,92 @@ def draw_award_badge(
     r_ss   = radius   * SS
     bw_ss  = border_w * SS
 
+    # ── Badge position (needed upfront for frosted-glass crop) ────────────────
+    bx = max(0, min(int(width  * x_ratio), width  - badge_w))
+    by = max(0, min(int(height * y_ratio), height - badge_h))
+
+    # Notch mode: square top corners, rounded bottom only. Always composited at y=0.
+    by_composite      = 0 if notch else by
+    effective_badge_h = badge_h  # full height is always visible
+    _notch_nudge      = int(badge_h * notch_text_offset) * SS if notch else 0
+    text_cy_ss        = bh / 2 + _notch_nudge if notch else bh / 2
+
+    if filled:
+        # ── Colour-tinted blur badge (3× supersample → LANCZOS downscale) ────
+        # Blurred poster pixels shine through a semi-opaque sash-coloured
+        # rounded rectangle.  No white frost, no border — just colour + blur.
+
+        # 1. Crop poster region, blur, upscale to SS for compositing
+        crop_y = 0 if notch else by
+        region     = image.crop((bx, crop_y, bx + badge_w, crop_y + badge_h))
+        blur_r     = max(4, int(badge_h * 0.35))
+        blurred_ss = (region.filter(ImageFilter.GaussianBlur(radius=blur_r))
+                            .resize((bw, bh), Image.LANCZOS)
+                            .convert("RGBA"))
+
+        # 2. Antialiased rounded-rect mask at SS (LANCZOS downscale gives smooth edges)
+        # Notch mode: square top corners, rounded bottom corners only.
+        rr_mask_ss = Image.new("L", (bw, bh), 0)
+        _rr_kwargs = dict(corners=(False, False, True, True)) if notch else {}
+        ImageDraw.Draw(rr_mask_ss).rounded_rectangle(
+            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255, **_rr_kwargs
+        )
+        rr_f = np.array(rr_mask_ss, dtype=np.float32) / 255  # smooth 0.0–1.0 at edges
+
+        # Clip blurred base to the rounded rect shape
+        blurred_ss.putalpha(rr_mask_ss)
+
+        # 3. Brightness-boosted sash colour overlay with V-compensated alpha.
+        # Hue and saturation stay untouched. V is pushed toward 1.0 so dark
+        # colours (gold, green) become lighter and stay vivid at lower opacity.
+        # Light colours (teal, light blue) already have high V so the boost
+        # does little — they get proportionally more alpha to compensate.
+        # Formula: alpha = 100 + V_original * 75  →  range ~138–175.
+        import colorsys as _cs
+        fr, fg, fb = border_rgb
+        _h, _s, _v = _cs.rgb_to_hsv(fr / 255, fg / 255, fb / 255)
+        _v_bright     = _v * 0.35 + 0.65        # push V toward 1.0, floor at 65%
+        _br, _bg, _bb = _cs.hsv_to_rgb(_h, _s, _v_bright)
+        vr, vg, vb    = int(_br * 255), int(_bg * 255), int(_bb * 255)
+        _alpha        = int(100 + _v * 75)       # light colours → more alpha; dark → less
+        tint_ss = Image.new("RGBA", (bw, bh), (vr, vg, vb, 0))
+        tint_ss.putalpha(Image.fromarray((rr_f * _alpha).astype(np.uint8), "L"))
+        badge_ss = Image.alpha_composite(blurred_ss, tint_ss)
+
+        # 4. Text at SS — black, centred in the visible (non-clipped) region
+        _fonts_dir    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+        if notch:
+            base_size     = effective_badge_h * 0.52
+            adjusted_size = effective_badge_h * 1.22 / (len(label) ** 0.45)
+        else:
+            base_size     = effective_badge_h * 0.44
+            adjusted_size = effective_badge_h * 0.82 / (len(label) ** 0.35)
+        font_size = int(min(base_size, adjusted_size)) * SS
+        max_text_w = int(bw * 0.86)
+        font = _load_font_fit(_fonts_dir, "Inter-Bold.ttf", font_size, label, max_text_w)
+
+        txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        td = ImageDraw.Draw(txt_layer)
+        tx, ty = _text_center(td, label, font, bw / 2, text_cy_ss)
+        td.text((tx, ty), label, font=font, fill=(0, 0, 0, 245))
+        badge_ss = Image.alpha_composite(badge_ss, txt_layer)
+
+        # 5. Downscale to final size — LANCZOS gives antialiased edges
+        badge_final = badge_ss.resize((badge_w, badge_h), Image.LANCZOS)
+
+        # 6. Composite onto poster (notch always at y=0, normal at by)
+        result = image.copy()
+        result.alpha_composite(badge_final, (bx, by_composite))
+        return result
+
     body_alpha   = 235
     border_alpha = 215
 
-    # ── Badge body + border ───────────────────────────────────────────────────
+    # ── Badge body + border (dark body, coloured border) ─────────────────────
     # Cairo path: uses arc() to build rounded-rectangle paths so every corner
     # gets proper sub-pixel coverage, and LinearGradient for the body fill.
     # The stroke is inset by half its width so it stays inside the shape.
     badge: Image.Image | None = None
-
-    # Pre-compute filled-mode colour stops once (used by both Cairo and PIL).
-    # hi = 30 % brighter than the sash colour, lo = 40 % darker, giving a
-    # top-to-bottom gradient that keeps the badge readable at any size.
-    if filled:
-        fr, fg, fb  = border_rgb
-        fill_hi    = (min(255, int(fr * 1.30)), min(255, int(fg * 1.30)), min(255, int(fb * 1.30)))
-        fill_lo    = (int(fr * 0.60), int(fg * 0.60), int(fb * 0.60))
-        # Border is a near-match of the fill colour (0.90×) — just dark enough
-        # to frame the badge subtly without drawing attention to itself.
-        fill_frame = (int(fr * 0.90), int(fg * 0.90), int(fb * 0.90))
 
     if _HAS_CAIRO:
         try:
@@ -1379,7 +1465,7 @@ def draw_award_badge(
             ctx.set_antialias(_cairo.ANTIALIAS_BEST)
 
             def _rrect(x: float, y: float, w: float, h: float, r: float) -> None:
-                """Add a rounded-rectangle path to the current Cairo context."""
+                """Add a fully rounded-rectangle path to the current Cairo context."""
                 ctx.move_to(x + r, y)
                 ctx.line_to(x + w - r, y)
                 ctx.arc(x + w - r, y + r,     r, -math.pi / 2,          0)
@@ -1391,42 +1477,38 @@ def draw_award_badge(
                 ctx.arc(x + r,     y + r,     r,  math.pi,      3 * math.pi / 2)
                 ctx.close_path()
 
+            def _rrect_notch(x: float, y: float, w: float, h: float, r: float) -> None:
+                """Notch shape: square top corners, rounded bottom corners only."""
+                ctx.move_to(x, y)
+                ctx.line_to(x + w, y)
+                ctx.line_to(x + w, y + h - r)
+                ctx.arc(x + w - r, y + h - r, r,  0,           math.pi / 2)
+                ctx.line_to(x + r, y + h)
+                ctx.arc(x + r,     y + h - r, r,  math.pi / 2, math.pi)
+                ctx.line_to(x, y)
+                ctx.close_path()
+
+            _draw_shape = _rrect_notch if notch else _rrect
+
             ba    = body_alpha / 255
             inset = bw_ss / 2
 
-            if filled:
-                # Sash-colour gradient body: lighter tint at top, mid colour in
-                # the centre, deeper shade at the bottom.
-                hi_r, hi_g, hi_b = fill_hi
-                lo_r, lo_g, lo_b = fill_lo
-                fr_n, fg_n, fb_n = fr / 255, fg / 255, fb / 255
-                grad = _cairo.LinearGradient(0, 0, 0, bh)
-                grad.add_color_stop_rgba(0.0, hi_r / 255, hi_g / 255, hi_b / 255, ba)
-                grad.add_color_stop_rgba(0.5, fr_n, fg_n, fb_n, ba)
-                grad.add_color_stop_rgba(1.0, lo_r / 255, lo_g / 255, lo_b / 255, ba)
-                ctx.set_source(grad)
-                _rrect(0, 0, bw, bh, r_ss)
-                ctx.fill()
-                # Deeper-shade frame derived from the fill colour
-                ff_r, ff_g, ff_b = fill_frame
-                ctx.set_source_rgba(ff_r / 255, ff_g / 255, ff_b / 255, border_alpha / 255)
-            else:
-                # Dark gradient body (8 → 24 → 8 brightness, slight blue tint)
-                d_lo = 8  / 255
-                d_hi = 24 / 255
-                grad = _cairo.LinearGradient(0, 0, 0, bh)
-                grad.add_color_stop_rgba(0.0, d_lo, d_lo, d_lo * 1.3, ba)
-                grad.add_color_stop_rgba(0.5, d_hi, d_hi, d_hi * 1.3, ba)
-                grad.add_color_stop_rgba(1.0, d_lo, d_lo, d_lo * 1.3, ba)
-                ctx.set_source(grad)
-                _rrect(0, 0, bw, bh, r_ss)
-                ctx.fill()
-                # Coloured border stroke
-                br_c, bg_c, bb_c = border_rgb
-                ctx.set_source_rgba(br_c / 255, bg_c / 255, bb_c / 255, border_alpha / 255)
+            # Dark gradient body (8 → 24 → 8 brightness, slight blue tint)
+            d_lo = 8  / 255
+            d_hi = 24 / 255
+            grad = _cairo.LinearGradient(0, 0, 0, bh)
+            grad.add_color_stop_rgba(0.0, d_lo, d_lo, d_lo * 1.3, ba)
+            grad.add_color_stop_rgba(0.5, d_hi, d_hi, d_hi * 1.3, ba)
+            grad.add_color_stop_rgba(1.0, d_lo, d_lo, d_lo * 1.3, ba)
+            ctx.set_source(grad)
+            _draw_shape(0, 0, bw, bh, r_ss)
+            ctx.fill()
+            # Coloured border stroke
+            br_c, bg_c, bb_c = border_rgb
+            ctx.set_source_rgba(br_c / 255, bg_c / 255, bb_c / 255, border_alpha / 255)
 
             ctx.set_line_width(bw_ss)
-            _rrect(inset, inset, bw - 2 * inset, bh - 2 * inset, max(1.0, r_ss - inset))
+            _draw_shape(inset, inset, bw - 2 * inset, bh - 2 * inset, max(1.0, r_ss - inset))
             ctx.stroke()
 
             surface.flush()
@@ -1455,28 +1537,18 @@ def draw_award_badge(
         t   = np.linspace(0, 1, bh, dtype=np.float32)
         b_arr = np.zeros((bh, bw, 4), dtype=np.uint8)
 
-        if filled:
-            # Gradient from fill_hi → border_rgb → fill_lo top-to-bottom
-            for ch, (hi_c, mid_c, lo_c) in enumerate(zip(fill_hi, border_rgb, fill_lo)):
-                ramp = np.where(
-                    t < 0.5,
-                    hi_c  + (mid_c - hi_c)  * (t * 2),
-                    mid_c + (lo_c  - mid_c) * ((t - 0.5) * 2),
-                ).astype(np.uint8)
-                b_arr[:, :, ch] = ramp[:, np.newaxis]
-            border_outline = (*fill_frame, border_alpha)
-        else:
-            darkness = (8 + 16 * np.sin(t * np.pi)).astype(np.uint8)
-            b_arr[:, :, 0] = darkness[:, np.newaxis]
-            b_arr[:, :, 1] = darkness[:, np.newaxis]
-            b_arr[:, :, 2] = np.minimum(255, (darkness * 1.3).astype(np.uint8))[:, np.newaxis]
-            border_outline = (*border_rgb, border_alpha)
+        darkness = (8 + 16 * np.sin(t * np.pi)).astype(np.uint8)
+        b_arr[:, :, 0] = darkness[:, np.newaxis]
+        b_arr[:, :, 1] = darkness[:, np.newaxis]
+        b_arr[:, :, 2] = np.minimum(255, (darkness * 1.3).astype(np.uint8))[:, np.newaxis]
+        border_outline = (*border_rgb, border_alpha)
 
         b_arr[:, :, 3] = body_alpha
         body      = Image.fromarray(b_arr, "RGBA")
+        _notch_corners = dict(corners=(False, False, True, True)) if notch else {}
         body_mask = Image.new("L", (bw, bh), 0)
         ImageDraw.Draw(body_mask).rounded_rectangle(
-            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255
+            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255, **_notch_corners
         )
         body.putalpha(body_mask)
         border_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
@@ -1485,41 +1557,36 @@ def draw_award_badge(
             radius=r_ss,
             outline=border_outline,
             width=bw_ss,
+            **_notch_corners,
         )
         badge = Image.alpha_composite(body, border_layer)
 
     # ── Text (PIL — same approach as draw_award_sash) ─────────────────────────
-    base_size     = badge_h * 0.40
-    adjusted_size = badge_h * 0.85 / (len(label) ** 0.35)
-    font_size     = int(min(base_size, adjusted_size)) * SS
+    if notch:
+        base_size     = effective_badge_h * 0.58
+        adjusted_size = effective_badge_h * 1.35 / (len(label) ** 0.45)
+    else:
+        base_size     = effective_badge_h * 0.40
+        adjusted_size = effective_badge_h * 0.85 / (len(label) ** 0.35)
+    font_size  = int(min(base_size, adjusted_size)) * SS
     _fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-    try:
-        font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size)
-    except IOError:
-        font = ImageFont.load_default()
+    max_text_w = int(bw * 0.86)
+    font = _load_font_fit(_fonts_dir, "Inter-Bold.ttf", font_size, label, max_text_w)
 
     txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     td = ImageDraw.Draw(txt_layer)
-    tx, ty = _text_center(td, label, font, bw / 2, bh / 2)
-    # Filled badges use a stronger black shadow so white text pops against the
-    # sash colour; dark-body badges keep the subtler shadow.
-    if filled:
-        # Black text with a subtle white shadow for lift against the colour fill
-        td.text((tx + SS, ty + SS), label, font=font, fill=(255, 255, 255, 120))
-        td.text((tx, ty),           label, font=font, fill=(0, 0, 0, 245))
-    else:
-        td.text((tx + SS, ty + SS), label, font=font, fill=(0, 0, 0, 160))
-        td.text((tx, ty),           label, font=font, fill=(255, 255, 255, 235))
+    tx, ty = _text_center(td, label, font, bw / 2, text_cy_ss)
+    # Dark-body badge: white text with subtle shadow
+    td.text((tx + SS, ty + SS), label, font=font, fill=(0, 0, 0, 160))
+    td.text((tx, ty),           label, font=font, fill=(255, 255, 255, 235))
     badge = Image.alpha_composite(badge, txt_layer)
 
     # ── Downscale to final size ───────────────────────────────────────────────
     badge = badge.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
 
-    # ── Composite onto poster ─────────────────────────────────────────────────
-    bx = max(0, min(int(width  * x_ratio), width  - badge_w))
-    by = max(0, min(int(height * y_ratio), height - badge_h))
+    # ── Composite onto poster (notch always at y=0, normal at by) ────────────
     result = image.copy()
-    result.alpha_composite(badge, (bx, by))
+    result.alpha_composite(badge, (bx, by_composite))
     return result
 
 

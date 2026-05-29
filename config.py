@@ -122,6 +122,10 @@ COMPOSITE_CACHE_TTL        = int(os.environ.get("COMPOSITE_CACHE_TTL", "604800")
 # Maximum number of composite cache entries. When exceeded the oldest entries are
 # evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL alone).
 COMPOSITE_MAX_ENTRIES      = int(os.environ.get("COMPOSITE_MAX_ENTRIES", "0"))
+# Set to any truthy value (1, true, yes) to skip composite cache reads and writes
+# entirely. Every request re-renders from scratch. Useful during development when
+# iterating on rendering changes and you don't want stale renders served.
+DISABLE_COMPOSITE_CACHE    = os.environ.get("DISABLE_COMPOSITE_CACHE", "").strip().lower() in ("1", "true", "yes")
 
 def _parse_bool_env(key: str, default: bool = False) -> bool:
     val = os.environ.get(key, "").strip().lower()

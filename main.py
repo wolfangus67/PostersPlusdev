@@ -373,8 +373,11 @@ class RequestConfig:
     sash_badge: bool = False   # True → badge style instead of diagonal sash
     sash_badge_x:      float = 0.62   # badge left-edge as fraction of poster width (flush right with the corner)
     sash_badge_y:      float = 0.04   # badge top-edge  as fraction of poster height
-    sash_badge_size:   float = 1.0    # uniform scale of badge dimensions (1.0 = default footprint)
+    sash_badge_size_w: float = 1.0    # horizontal scale of badge
+    sash_badge_size_h: float = 1.0    # vertical scale of badge
     sash_badge_filled: bool  = False  # fill badge body with sash colour; border becomes black
+    sash_badge_notch:  bool  = False  # clip top ~42% so badge emerges from top edge; text recentred
+    sash_badge_notch_offset: float = 0.03  # downward text nudge as fraction of visible notch height
     sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
@@ -473,12 +476,15 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.bottom_gradient = _bg_raw
     cfg.sash_badge              = _b("sash_badge",             cfg.sash_badge)
     cfg.sash_badge_filled       = _b("sash_badge_filled",      cfg.sash_badge_filled)
+    cfg.sash_badge_notch        = _b("sash_badge_notch",       cfg.sash_badge_notch)
+    cfg.sash_badge_notch_offset = _f("sash_badge_notch_offset", cfg.sash_badge_notch_offset, -0.5, 0.5)
     # Position ratios — full poster span so users can put the badge anywhere
     cfg.sash_badge_x            = _f("sash_badge_x",           cfg.sash_badge_x,           0.0, 1.0)
     cfg.sash_badge_y            = _f("sash_badge_y",           cfg.sash_badge_y,           0.0, 1.0)
     # Capped at 1.5× — beyond that the badge would auto-displace via the
     # in-renderer clamp at the default x position, which is confusing UX.
-    cfg.sash_badge_size         = _f("sash_badge_size",        cfg.sash_badge_size,        0.5, 1.5)
+    cfg.sash_badge_size_w       = _f("sash_badge_size_w",      cfg.sash_badge_size_w,      0.5, 2.0)
+    cfg.sash_badge_size_h       = _f("sash_badge_size_h",      cfg.sash_badge_size_h,      0.5, 2.0)
     cfg.sash_length_ratio       = _f("sash_length_ratio",      cfg.sash_length_ratio,      0.8, 1.5)
     cfg.sash_height_ratio       = _f("sash_height_ratio",      cfg.sash_height_ratio,      0.06, 0.20)
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
@@ -1028,8 +1034,11 @@ def build_poster(
             image = draw_award_badge(image, label, sash_type=sash_type,
                                      x_ratio=cfg.sash_badge_x,
                                      y_ratio=cfg.sash_badge_y,
-                                     size_ratio=cfg.sash_badge_size,
-                                     filled=cfg.sash_badge_filled)
+                                     size_ratio_w=cfg.sash_badge_size_w,
+                                     size_ratio_h=cfg.sash_badge_size_h,
+                                     filled=cfg.sash_badge_filled,
+                                     notch=cfg.sash_badge_notch,
+                                     notch_text_offset=cfg.sash_badge_notch_offset)
         else:
             image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,
@@ -1346,7 +1355,7 @@ async def get_poster(
     # all rendering parameters so different visual configs don't collide.
     # Skipped when an explicit quality= override is supplied (one-off).
     # ------------------------------------------------------------------
-    if not quality:
+    if not quality and not _cfg.DISABLE_COMPOSITE_CACHE:
         _params_hash = hashlib.md5(
             "&".join(f"{k}={v}" for k, v in sorted(raw_params.items())).encode()
         ).hexdigest()[:8]
