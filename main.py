@@ -153,11 +153,11 @@ _rating_fetch_inflight:         dict[str, asyncio.Event] = {}
 _rating_backoff:                dict[str, float]          = {}  # imdb_id -> retry-after (loop time)
 _rating_fail_count:             dict[str, int]            = {}  # imdb_id -> consecutive network-failure count (for escalating back-off)
 _mdblist_semaphore:             "asyncio.Semaphore | None" = None  # caps concurrent MDBlist HTTP calls; created inside event loop
-# Global rate-limit cooldown: when MDBlist sends a 429, all MDBlist requests are
-# paused until this timestamp (event-loop time).  This prevents the queue of
-# waiting titles from each hitting 429 individually and burning per-title backoffs
-# for what is really a single key-level throttle window.
-_mdblist_global_cooldown_until: float = 0.0
+# Per-key cooldown timestamps (event-loop time). Keyed by the API key string so
+# rotation is independent — a rate-limited key stands down while the other serves.
+_mdblist_key_cooldown: dict[str, float] = {}
+# Index into _cfg.SERVER_MDBLIST_KEYS for the currently active server-side key.
+_mdblist_active_key_idx: int = 0
 
 
 async def _background_quality_fetch(
@@ -299,8 +299,8 @@ def _resolve_tmdb_key(query_key: str) -> str | None:
 def _resolve_mdblist_key(query_key: str) -> str | None:
     if query_key:
         return query_key
-    if _cfg.SERVER_MDBLIST_KEY:
-        return _cfg.SERVER_MDBLIST_KEY
+    if _cfg.SERVER_MDBLIST_KEYS:
+        return _cfg.SERVER_MDBLIST_KEYS[_mdblist_active_key_idx % len(_cfg.SERVER_MDBLIST_KEYS)]
     return None
 
 
@@ -1130,7 +1130,8 @@ async def server_caps(access_key: str = ""):
         raise HTTPException(status_code=403, detail="Unauthorized")
     return {
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
-        "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEY),
+        "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEYS),
+        "mdblist_key_count":     len(_cfg.SERVER_MDBLIST_KEYS),
         "aiostreams_configured": bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH),
         "quality_configured":    (
             bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
@@ -1403,7 +1404,7 @@ async def get_poster(
 
     # Declare globals that are both read and written in this function so Python
     # doesn't complain about use-before-global-declaration.
-    global _mdblist_global_cooldown_until
+    global _mdblist_active_key_idx
 
     cached_rating = get_cached_rating(imdb_id)
 
@@ -1458,17 +1459,27 @@ async def get_poster(
     if not rating_already_cached and effective_mdblist_key:
         _loop_now = asyncio.get_running_loop().time()
 
-        # Global rate-limit cooldown: when MDBlist is throttling the key, skip all
-        # MDBlist calls until the window expires.  This prevents every queued title
-        # from individually hitting 429 and accumulating its own per-title backoff.
-        if _loop_now < _mdblist_global_cooldown_until:
-            _remaining = _mdblist_global_cooldown_until - _loop_now
-            logger.debug(
-                f"Rating fetch for {imdb_id} skipped "
-                f"(MDBlist global rate-limit cooldown: {_remaining:.0f}s remaining)"
-            )
-            effective_mdblist_key = None
-            _rating_backoff_active = True
+        # Per-key cooldown: if the current active key is still cooling down, try to
+        # rotate to the next available key before giving up entirely.
+        if effective_mdblist_key and _loop_now < _mdblist_key_cooldown.get(effective_mdblist_key, 0.0):
+            _server_keys = _cfg.SERVER_MDBLIST_KEYS
+            _rotated = False
+            for _i in range(1, len(_server_keys)):
+                _candidate = _server_keys[(_mdblist_active_key_idx + _i) % len(_server_keys)]
+                if _loop_now >= _mdblist_key_cooldown.get(_candidate, 0.0):
+                    _mdblist_active_key_idx = (_mdblist_active_key_idx + _i) % len(_server_keys)
+                    effective_mdblist_key = _candidate
+                    logger.info(f"MDBlist key rotated to key #{_mdblist_active_key_idx + 1} for {imdb_id}")
+                    _rotated = True
+                    break
+            if not _rotated:
+                _remaining = _mdblist_key_cooldown.get(effective_mdblist_key, 0.0) - _loop_now
+                logger.debug(
+                    f"Rating fetch for {imdb_id} skipped "
+                    f"(all MDBlist keys cooling down; {_remaining:.0f}s remaining on active key)"
+                )
+                effective_mdblist_key = None
+                _rating_backoff_active = True
 
         # Per-title backoff (network failures, or this specific title's last 429).
         if effective_mdblist_key:
@@ -1715,17 +1726,30 @@ async def get_poster(
                     backoff_secs = 3600.0
                     logger.warning(f"MDblist rate-limited {imdb_id} — using 1h default back-off")
 
-                # Also set a global cooldown so all other queued MDBlist requests
-                # stand down for the same window instead of hitting 429 one by one.
-                # Cap the global window at 2 min — enough to cover any realistic
-                # rolling-window reset without freezing the whole service for an hour.
-                _global_window = min(backoff_secs, 120.0)
-                _new_global_until = asyncio.get_running_loop().time() + _global_window
-                if _new_global_until > _mdblist_global_cooldown_until:
-                    _mdblist_global_cooldown_until = _new_global_until
+                # Mark this specific key as cooling down, then rotate to the next
+                # available key so subsequent requests can proceed immediately.
+                _now2 = asyncio.get_running_loop().time()
+                _mdblist_key_cooldown[effective_mdblist_key] = _now2 + backoff_secs
+                _server_keys = _cfg.SERVER_MDBLIST_KEYS
+                if len(_server_keys) > 1:
+                    for _i in range(1, len(_server_keys)):
+                        _candidate = _server_keys[(_mdblist_active_key_idx + _i) % len(_server_keys)]
+                        if _now2 >= _mdblist_key_cooldown.get(_candidate, 0.0):
+                            _mdblist_active_key_idx = (_mdblist_active_key_idx + _i) % len(_server_keys)
+                            logger.warning(
+                                f"MDBlist key #{(_mdblist_active_key_idx - _i) % len(_server_keys) + 1} rate-limited "
+                                f"— rotated to key #{_mdblist_active_key_idx + 1}"
+                            )
+                            break
+                    else:
+                        logger.warning(
+                            f"MDBlist rate-limited — all {len(_server_keys)} keys cooling down "
+                            f"for up to {backoff_secs:.0f}s"
+                        )
+                else:
                     logger.warning(
-                        f"MDBlist global cooldown activated: {_global_window:.0f}s "
-                        f"(all MDBlist requests paused)"
+                        f"MDBlist rate-limited — single key cooling down for {backoff_secs:.0f}s "
+                        f"(add MDBLIST_API_KEY_2 for automatic rotation)"
                     )
             else:
                 # Network / timeout failure — escalating back-off so a transient

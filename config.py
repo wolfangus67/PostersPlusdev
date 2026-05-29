@@ -32,6 +32,11 @@ QUALITY_SOURCE        = os.environ.get("QUALITY_SOURCE", "aiostreams").lower().s
 SCRAPER_URL           = os.environ.get("SCRAPER_URL", "").strip()
 SERVER_TMDB_KEY       = os.environ.get("TMDB_API_KEY", "").strip()
 SERVER_MDBLIST_KEY    = os.environ.get("MDBLIST_API_KEY", "").strip()
+SERVER_MDBLIST_KEY_2  = os.environ.get("MDBLIST_API_KEY_2", "").strip()
+
+# Ordered list of all configured server-side MDBList keys (primary first).
+# Used by the key-rotation logic in main.py to fall back when a key is exhausted.
+SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
 
 # Workers
 # CDN cache TTL (seconds). When > 0, poster responses include a

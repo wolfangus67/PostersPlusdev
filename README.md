@@ -114,6 +114,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 |---|---|---|
 | `TMDB_API_KEY` | - | TMDB API key for poster/metadata fetching |
 | `MDBLIST_API_KEY` | - | MDBList API key for ratings and award data |
+| `MDBLIST_API_KEY_2` | - | Optional second MDBList key. Automatically rotated to when the primary key is rate-limited |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
 | `WORKERS` | `2` | Number of Uvicorn worker processes |
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
