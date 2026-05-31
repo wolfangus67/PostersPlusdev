@@ -1708,6 +1708,7 @@
               </div>
             </div>
             <div id="rating-mode4-fields" style="display:none;">
+              <div class="field-hint" style="margin-bottom:10px;">All text and both dot separators take the rating-derived colour from the Colour Palette above. I recomend prestige for this mode, as the majority will be silver.</div>
               <div class="toggle-row">
                 <div>
                   <div class="toggle-label">Show Year</div>
@@ -1731,7 +1732,6 @@
                   <span class="range-val" id="rng-y4">0.90</span>
                 </div>
               </div>
-              <div class="field-hint" style="margin-top:6px;">All text and both dot separators take the rating-derived colour from the Colour Palette above. I recomend prestige for this mode, as the majority will be silver.</div>
             </div>
             <div id="rating-glow-fields" style="margin-top:10px;">
               <div class="field">
@@ -1780,8 +1780,8 @@
             <div class="field">
               <label class="field-label">Max Width Ratio</label>
               <div class="range-row">
-                <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.84" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-lw">0.84</span>
+                <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
+                <span class="range-val" id="rng-lw">0.75</span>
               </div>
             </div>
             <div class="field">
@@ -2140,6 +2140,7 @@ let sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(
 let sashDisabled = new Set(SASH_DEFAULT_DISABLED);   // IDs explicitly disabled via ✕ button
 let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
 let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false };
+let serverCapsLoaded = false;
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
 
 const previewPanel = document.querySelector('.preview-panel');
@@ -2319,6 +2320,7 @@ async function fetchServerCaps() {
     const resp = await fetch(url);
     if (!resp.ok) return;
     serverCaps = await resp.json();
+    serverCapsLoaded = true;
     updateKeyBadges();
   } catch(e) {}
 }
@@ -2358,10 +2360,10 @@ function updateScraperHint() {
   document.getElementById('wait-quality-field').style.display = qualityMode ? '' : 'none';
   const aiosHint = document.getElementById('aiostreams-hint');
   if (aiosHint) {
-    // quality_configured was added later; fall back to aiostreams_configured so
-    // servers that haven't been restarted yet still suppress the hint correctly.
+    // Don't show the warning until server caps have loaded — avoids a false
+    // positive on page load before the async fetch completes.
     const qualityOk = serverCaps.quality_configured || serverCaps.aiostreams_configured;
-    aiosHint.style.display = (qualityMode && !qualityOk) ? '' : 'none';
+    aiosHint.style.display = (serverCapsLoaded && qualityMode && !qualityOk) ? '' : 'none';
   }
 }
 

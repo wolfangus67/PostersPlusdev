@@ -1,5 +1,6 @@
 #tmdb.py
 import asyncio
+import colorsys
 import io
 import logging
 from datetime import date as _date, datetime as _datetime
@@ -7,7 +8,7 @@ import httpx
 import numpy as np
 
 logger = logging.getLogger(__name__)
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from cache import (
     get_cached_trending_snapshot,
@@ -47,33 +48,152 @@ def normalise_poster(image: Image.Image) -> Image.Image:
     return image.crop((left, top, left + target_w, top + target_h))
 
 
-def ensure_light_logo(logo: Image.Image, threshold: float = 0.2) -> Image.Image:
+def ensure_light_logo(logo: Image.Image,
+                       lum_threshold: float = 0.2,
+                       sat_threshold: float = 0.25) -> Image.Image:
     """
-    If the visible pixels of *logo* are too dark, force them all to white.
-    Uses numpy for vectorised luminance calculation — avoids materialising
-    a Python list of per-pixel tuples.
+    If the visible pixels of a logo are too dark AND mostly achromatic (low
+    saturation), force them to white so they read on dark poster backgrounds.
+    Coloured logos (red titles, branded colours, etc.) are left untouched —
+    only neutral black/dark-grey logos are converted.
     """
-    rgba = np.array(logo.convert("RGBA"), dtype=np.float32)   # H×W×4
+    rgba = np.array(logo.convert("RGBA"), dtype=np.float32)
     alpha = rgba[:, :, 3]
-    visible_mask = alpha > 30                                  # boolean H×W
+    visible = alpha > 30
 
-    if not visible_mask.any():
+    if not visible.any():
         return logo
 
-    r = rgba[:, :, 0][visible_mask]
-    g = rgba[:, :, 1][visible_mask]
-    b = rgba[:, :, 2][visible_mask]
+    r = rgba[:, :, 0][visible]
+    g = rgba[:, :, 1][visible]
+    b = rgba[:, :, 2][visible]
+
     avg_lum = (0.2126 * r + 0.7152 * g + 0.0722 * b).mean() / 255.0
+    if avg_lum > lum_threshold:
+        return logo  # Already light enough
 
-    if avg_lum > threshold:
-        return logo
+    # Check average saturation of visible pixels.
+    # Saturation = (max - min) / max per pixel (HSV definition).
+    max_c = np.maximum(np.maximum(r, g), b)
+    min_c = np.minimum(np.minimum(r, g), b)
+    coloured = max_c > 0
+    if coloured.any():
+        avg_sat = (((max_c - min_c) / np.where(coloured, max_c, 1.0)) * coloured).mean()
+    else:
+        avg_sat = 0.0
 
-    # Force visible pixels to white, preserve alpha channel
+    if avg_sat > sat_threshold:
+        return logo  # Coloured logo — preserve original hues
+
+    # Dark, achromatic logo — force to white
     out = rgba.copy()
-    out[:, :, 0][visible_mask] = 255
-    out[:, :, 1][visible_mask] = 255
-    out[:, :, 2][visible_mask] = 255
+    out[:, :, 0][visible] = 255
+    out[:, :, 1][visible] = 255
+    out[:, :, 2][visible] = 255
     return Image.fromarray(out.astype(np.uint8), "RGBA")
+
+
+# Experimental contrast-rescue tuning.  Lower = more conservative (only recolour
+# when the logo and background colours are very close).  Set to 0 to disable.
+LOGO_CONTRAST_MIN = 0.25   # normalised RGB distance (0–1) below which we recolour
+# Logos whose internal colour spread exceeds this are left alone — multi-colour
+# logos (Mario) or outline+fill logos (Archer) rely on their own colours for
+# legibility and would be ruined by a flat recolour.
+LOGO_COLOR_VARIANCE_MAX = 0.16
+# When a flat logo is recoloured, default to white and only switch to black on
+# genuinely light backgrounds (white reads well on most posters).
+LOGO_DARK_TEXT_LUM = 0.66   # background luminance above which black is used
+# In the mid-luminance band (where plain white/black are weakest) a flat logo
+# may instead be recoloured to the COMPLEMENTARY hue of the background, forced
+# to an extreme value for guaranteed luminance contrast.  Only used when the
+# background has a clear dominant hue — greyscale backgrounds fall back to
+# white/black.  Set the band to (0, 0) to disable accents entirely.
+LOGO_ACCENT_LUM_BAND = (0.40, 0.66)   # bg-luminance window for accent colours
+LOGO_ACCENT_MIN_SAT  = 0.25           # bg must be at least this saturated
+
+# Logos are normalised to one overall size (the geometric mean of the Width and
+# Height caps), then clamped to those caps preserving aspect ratio.  Both caps
+# are HARD ceilings — the configured ratios are the true maximums.  PIVOT is the
+# width:height ratio treated as "neutral" (a typical title logo is wider than
+# tall); it's used only to label logo orientation in the sizing telemetry.
+LOGO_ASPECT_PIVOT = 2.8    # neutral aspect (wider → "wide", narrower → "tall")
+# Absolute pixel ceiling on rendered logo height — a hard stop so a tall, only
+# moderately-wide logo can never dominate the poster, regardless of the Height
+# ratio slider or aspect flex.  ~25 % of a 750 px poster.
+LOGO_ABS_MAX_H = 150
+# Single-axis fill stretch: a slim logo whose under-cap dimension would leave it
+# looking lost may be stretched up to this factor toward its cap (width OR
+# height, never both).  Height stays bounded by LOGO_ABS_MAX_H.
+LOGO_FILL_STRETCH = 2
+# The height stretch only fires when the logo's clamped height is below this
+# fraction of its height cap — i.e. only genuinely short/slim logos are lifted,
+# while normally-proportioned logos are left at their true aspect ratio.
+LOGO_FILL_HEIGHT_TRIGGER = 0.6
+
+
+def logo_centre_y(height: int, bottom_ratio: float = LOGO_BOTTOM_RATIO) -> int:
+    """
+    Vertical centre line that composite_logo aligns logos to.  Exposed so the
+    fallback title-text renderer can sit on the exact same line, keeping logo
+    and text posters visually consistent.
+    """
+    max_h = min(int(height * LOGO_MAX_H_RATIO), LOGO_ABS_MAX_H)
+    return int(height - int(height * bottom_ratio) - max_h / 2)
+
+
+def _recolor_target(bg_rgb: tuple[float, float, float],
+                    bg_lum: float) -> tuple[tuple[int, int, int], str]:
+    """
+    Choose the colour to recolour a flat logo to, given the background under it.
+
+    Returns (rgb, label).  In the mid-luminance band, a saturated background
+    yields the complementary hue pushed to an extreme value (dark accent over a
+    lighter bg, light accent over a darker bg) so contrast stays high while the
+    tint ties to the poster.  Outside the band, or on greyscale backgrounds,
+    falls back to white (default) or black (very light backgrounds).
+    """
+    r, g, b = bg_rgb[0] / 255, bg_rgb[1] / 255, bg_rgb[2] / 255
+    h, s, _v = colorsys.rgb_to_hsv(r, g, b)
+
+    lo, hi = LOGO_ACCENT_LUM_BAND
+    if lo < hi and lo <= bg_lum <= hi and s >= LOGO_ACCENT_MIN_SAT:
+        comp_h = (h + 0.5) % 1.0
+        comp_v = 0.30 if bg_lum >= 0.50 else 0.95   # opposite side of bg luminance
+        cr, cg, cb = colorsys.hsv_to_rgb(comp_h, 0.85, comp_v)
+        return (int(cr * 255), int(cg * 255), int(cb * 255)), "accent"
+
+    if bg_lum > LOGO_DARK_TEXT_LUM:
+        return (20, 20, 20), "black"
+    return (255, 255, 255), "white"
+
+
+def _logo_color_stats(logo: Image.Image) -> tuple[tuple[float, float, float], float] | None:
+    """
+    Return ((mean_r, mean_g, mean_b), variance) for the logo's opaque pixels.
+
+    variance is the mean normalised RGB distance of pixels from the mean colour
+    (0–1).  Low → flat single-colour logo (safe to recolour); high → multi-colour
+    or outline+fill logo whose own colours carry its legibility.
+    Returns None when the logo has no opaque pixels.
+    """
+    rgba = np.array(logo.convert("RGBA"), dtype=np.float32)
+    vis = rgba[:, :, 3] > 64
+    if not vis.any():
+        return None
+    rgb  = rgba[:, :, :3][vis]                       # N×3
+    mean = rgb.mean(axis=0)
+    var  = float(np.sqrt(((rgb - mean) ** 2).sum(axis=1)).mean() / 441.673)
+    return (float(mean[0]), float(mean[1]), float(mean[2])), var
+
+
+def _recolor_logo_solid(logo: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
+    """Force all visible logo pixels to a solid colour, preserving alpha."""
+    rgba = np.array(logo.convert("RGBA"))
+    vis = rgba[:, :, 3] > 30
+    rgba[:, :, 0][vis] = rgb[0]
+    rgba[:, :, 1][vis] = rgb[1]
+    rgba[:, :, 2][vis] = rgb[2]
+    return Image.fromarray(rgba, "RGBA")
 
 
 # ---------------------------------------------------------------------------
@@ -328,8 +448,6 @@ def _saliency_crop_left(image: Image.Image, crop_w: int) -> int:
     Centre bias: ≈10 % of peak score — gentle enough not to override clear signal
     but prevents chaotic results on uniformly textured frames.
     """
-    from PIL import ImageFilter
-
     w, h = image.size
     if crop_w >= w:
         return 0
@@ -519,8 +637,6 @@ async def _fetch_metahub_logo(
     if bbox:
         logo = logo.crop(bbox)
 
-    logo = ensure_light_logo(logo)
-
     buf = io.BytesIO()
     logo.save(buf, format="PNG")
     set_cached_tmdb_logo(cache_key, buf.getvalue())
@@ -603,8 +719,6 @@ async def fetch_logo(
     bbox = logo.getchannel("A").getbbox()
     if bbox:
         logo = logo.crop(bbox)
-
-    logo = ensure_light_logo(logo)
 
     buf = io.BytesIO()
     logo.save(buf, format="PNG")
@@ -772,6 +886,8 @@ async def fetch_release_status(
 # Logo rendering (onto poster)
 # ---------------------------------------------------------------------------
 
+
+
 def composite_logo(
     image: Image.Image,
     logo: Image.Image,
@@ -783,15 +899,139 @@ def composite_logo(
     width, height = image.size
 
     max_w = int(width  * max_w_ratio)
-    max_h = int(height * max_h_ratio)
+    # Height is bounded by BOTH the ratio and an absolute pixel ceiling, so a
+    # raised Height slider can't let tall logos take over the poster.
+    max_h = min(int(height * max_h_ratio), LOGO_ABS_MAX_H)
 
-    logo.thumbnail((max_w, max_h), Image.LANCZOS)
+    # ── Tight crop: ignore faint glow / halo / anti-alias pixels ──────────────
+    # A plain getbbox() keys off ANY non-zero alpha, so baked-in soft shadows,
+    # outer glows, or stray anti-aliased specks inflate the bounding box and
+    # throw off the width-based normalisation below.  Threshold the alpha first
+    # so only reasonably solid pixels define the box, then fall back to the full
+    # alpha bbox if thresholding leaves nothing (e.g. a deliberately faint logo).
+    alpha = logo.getchannel("A")
+    solid = alpha.point(lambda a: 255 if a > 32 else 0)
+    bbox  = solid.getbbox() or alpha.getbbox()
+    if bbox:
+        logo = logo.crop(bbox)
 
-    alpha_bbox = logo.getchannel("A").getbbox()
-    if alpha_bbox:
-        logo = logo.crop(alpha_bbox)
+    lw, lh = logo.width, logo.height
+    if lw <= 0 or lh <= 0:
+        return
 
-    logo_x = round((width - logo.width) / 2)
-    logo_y = height - int(height * bottom_ratio) - logo.height
+    # ── Normalise size by AREA, with hard caps on both axes ───────────────────
+    # We target a constant geometric mean of the two caps (one overall size),
+    # then clamp to the caps preserving aspect ratio.  BOTH caps are now hard
+    # ceilings: the configured Width and Height ratios are the true maximums a
+    # logo will ever reach.  Fill stretching may grow a slim logo UP TO a cap,
+    # but never past it — so logos can't sprawl toward the borders.
+    aspect = lw / lh
+
+    # Orientation, kept for the sizing telemetry below: -1 (tall) .. +1 (wide).
+    orient    = float(np.tanh(np.log(aspect / LOGO_ASPECT_PIVOT)))
+    eff_max_w = max_w                       # hard width ceiling
+    eff_max_h = max_h                       # hard height ceiling (already ≤ LOGO_ABS_MAX_H)
+
+    # Overall size target comes from the BASE caps so the average logo size stays
+    # consistent; the flex only relaxes the clamp for the dominant axis.
+    target = (max_w * max_h) ** 0.5
+    new_w  = target * (aspect ** 0.5)
+    new_h  = target / (aspect ** 0.5)
+
+    if new_w > eff_max_w:
+        new_h *= eff_max_w / new_w
+        new_w  = eff_max_w
+    if new_h > eff_max_h:
+        new_w *= eff_max_h / new_h
+        new_h  = eff_max_h
+
+    # Single-axis fill: after the aspect-preserving clamp, one dimension is
+    # pinned to its cap and the other sits below it.  Stretch that under-cap
+    # dimension toward its cap to give slim logos more presence.
+    #
+    # The HEIGHT stretch only fires for genuinely short logos (below the
+    # trigger fraction of the cap) and its strength scales with HOW short the
+    # logo is: one sitting right at the trigger gets ~1.0× (barely touched),
+    # while a far-shorter logo ramps up toward the full LOGO_FILL_STRETCH.
+    # This avoids over-stretching logos that only just qualify.
+    trigger_h = eff_max_h * LOGO_FILL_HEIGHT_TRIGGER
+    if new_h < trigger_h:
+        t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
+        factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
+        new_h  = min(eff_max_h, float(LOGO_ABS_MAX_H), new_h * factor)
+    elif new_w < eff_max_w:
+        new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
+
+    # TEMP debug — logo sizing telemetry for tuning the pixel ceiling.
+    logger.info(
+        f"LOGO SIZE: src={lw}x{lh} aspect={aspect:.2f} orient={orient:+.2f} "
+        f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
+    )
+
+    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.LANCZOS)
+
+    # ── Position ─────────────────────────────────────────────────────────────
+    # Centre every logo on a fixed vertical line rather than sharing a common
+    # bottom edge.  Bottom-anchoring made short single-line logos sit low and
+    # feel like they lacked presence next to tall multi-line logos.  The centre
+    # line is the midline of the tallest possible logo (the height cap plus its
+    # aspect flex), so the tallest logos still bottom out at the intended
+    # baseline while shorter logos float up to share that same centre.
+    logo_x   = round((width - logo.width) / 2)
+    centre_y = logo_centre_y(height, bottom_ratio)
+    logo_y   = int(centre_y - logo.height / 2)
+
+    # ── Background-aware legibility adjustments ──────────────────────────────
+    # Sample the poster region the logo will cover (pure poster, sampled before
+    # the paste) and derive its mean colour + luminance.
+    cx1 = max(0, logo_x)
+    cy1 = max(0, logo_y)
+    cx2 = min(width,  logo_x + logo.width)
+    cy2 = min(height, logo_y + logo.height)
+    if cx2 > cx1 and cy2 > cy1:
+        bg_arr = np.array(image.crop((cx1, cy1, cx2, cy2)).convert("RGB"),
+                          dtype=np.float32)
+        bg_r   = float(bg_arr[:, :, 0].mean())
+        bg_g   = float(bg_arr[:, :, 1].mean())
+        bg_b   = float(bg_arr[:, :, 2].mean())
+        bg_lum = (0.2126 * bg_r + 0.7152 * bg_g + 0.0722 * bg_b) / 255.0
+
+        # ── Experimental: contrast rescue ────────────────────────────────────
+        # If the logo's average colour sits too close to the background's, the
+        # title blends in (e.g. a red logo over a warm orange poster).  Recolour
+        # it to white or black for guaranteed legibility — but ONLY when the
+        # colour distance is small enough to be confident it's truly unreadable,
+        # so well-contrasted logos are never touched.
+        recoloured = False
+        if LOGO_CONTRAST_MIN > 0:
+            stats = _logo_color_stats(logo)
+            if stats is not None:
+                logo_rgb, variance = stats
+                dist = (((logo_rgb[0] - bg_r) ** 2 +
+                         (logo_rgb[1] - bg_g) ** 2 +
+                         (logo_rgb[2] - bg_b) ** 2) ** 0.5) / 441.673  # 0–1
+                if dist < LOGO_CONTRAST_MIN:
+                    if variance > LOGO_COLOR_VARIANCE_MAX:
+                        # Multi-colour / outline+fill logo — recolouring would
+                        # destroy the internal contrast it relies on. Leave it.
+                        logger.info(
+                            f"Logo contrast rescue SKIPPED: dist={dist:.3f} but "
+                            f"variance={variance:.3f} > {LOGO_COLOR_VARIANCE_MAX} "
+                            f"(multi-colour logo preserved)"
+                        )
+                    else:
+                        target, label = _recolor_target((bg_r, bg_g, bg_b), bg_lum)
+                        logo = _recolor_logo_solid(logo, target)
+                        recoloured = True
+                        logger.info(
+                            f"Logo contrast rescue: dist={dist:.3f} < "
+                            f"{LOGO_CONTRAST_MIN}, variance={variance:.3f}, "
+                            f"bg_lum={bg_lum:.2f} → recoloured to {label} "
+                            f"rgb{target}"
+                        )
+
+        # Existing narrow rescue: whiten dark achromatic logos on dark posters.
+        if not recoloured and bg_lum < 0.40:
+            logo = ensure_light_logo(logo)
 
     image.paste(logo, (logo_x, logo_y), logo)

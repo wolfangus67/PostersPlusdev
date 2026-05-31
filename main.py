@@ -223,7 +223,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label
-from tmdb import composite_logo, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status
+from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -796,7 +796,40 @@ def build_poster(
             bottom_ratio=cfg.logo_bottom_ratio,
         )
     elif fallback_title:
-        # Multi-line aware fallback title rendering using Playfair Display Bold.
+        # ── Genre-aware font selection ────────────────────────────────────────
+        # Titles are bucketed by genre and rendered in a thematically matching
+        # font so different content categories feel distinct.
+        #
+        # Bucket → font mapping:
+        #   Horror / Thriller / Mystery  → Creepster  (gothic, unsettling)
+        #   Action / Sci-Fi / Adventure  → Bebas Neue (bold, cinematic)
+        #   Comedy / Animation / Family  → Pacifico   (friendly, rounded)
+        #   Drama / Romance / History    → Playfair   (elegant, literary)
+        #   Crime / War / Documentary    → Oswald     (authoritative, strong)
+        #   Default                      → NotoSerif  (neutral, readable)
+        _GENRE_FONTS: dict[str, str] = {
+            "Horror":           "Creepster-Regular.ttf",
+            "Thriller":         "Creepster-Regular.ttf",
+            "Mystery":          "Creepster-Regular.ttf",
+            "Action":           "BebasNeue-Bold.ttf",
+            "Sci-Fi":           "BebasNeue-Bold.ttf",
+            "Adventure":        "BebasNeue-Bold.ttf",
+            "Fantasy":          "BebasNeue-Bold.ttf",
+            "Western":          "BebasNeue-Bold.ttf",
+            "Comedy":           "Pacifico-Regular.ttf",
+            "Animation":        "Pacifico-Regular.ttf",
+            "Family":           "Pacifico-Regular.ttf",
+            "Drama":            "PlayfairDisplay-Bold.ttf",
+            "Romance":          "PlayfairDisplay-Bold.ttf",
+            "History":          "PlayfairDisplay-Bold.ttf",
+            "Music":            "PlayfairDisplay-Bold.ttf",
+            "Crime":            "Oswald-Bold.ttf",
+            "War":              "Oswald-Bold.ttf",
+            "Documentary":      "Oswald-Bold.ttf",
+        }
+        _font_file = _GENRE_FONTS.get(genre, "NotoSerif-Bold.ttf")
+
+        # Multi-line aware fallback title rendering.
         #
         # Font size is scaled down as title length grows so long titles don't
         # feel enormous.  The formula maps character count to a size ratio:
@@ -809,13 +842,15 @@ def build_poster(
         # the poster without touching the edges.  The shrink loop is a safety
         # net for very long or single-word titles that resist wrapping.
         max_width      = int(width * 0.80)
-        title_cy       = height - int(height * 0.3)
+        # Sit on the exact same vertical centre line composite_logo uses, so a
+        # text-title poster lines up with a logo poster in the same row.
+        title_cy       = logo_centre_y(height, cfg.logo_bottom_ratio)
         _char_count    = len(fallback_title)
         _raw_ratio     = 0.142 - _char_count * 0.0018
         font_size      = int(width * max(0.070, min(0.130, _raw_ratio)))
         MIN_FONT_SIZE  = 26
         MAX_LINES      = 2
-        FONT_PATH      = os.path.join(_FONTS_DIR, "NotoSerif-Bold.ttf")
+        FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
 
         def _wrap_lines(text: str, current_font) -> list[str]:
             """Greedy word-wrap: each line packs as many words as fit within max_width."""
@@ -858,6 +893,21 @@ def build_poster(
         total_height   = line_height * len(lines)
         block_top      = title_cy - total_height // 2
         shadow_offset  = max(2, int(font_size * 0.04))
+
+        # ── Genre mascot ─────────────────────────────────────────────────────
+        # On genuine no-art fallback canvases, place a cute genre-themed cartoon
+        # above the title so a missing-poster card feels intentional and fun
+        # rather than bare.  Skipped when there's real art behind the title.
+        if no_poster:
+            mascot = _load_genre_emoji(genre)
+            if mascot is not None:
+                m_size = int(width * 0.30)               # ~150 px on a 500 px poster
+                mascot = mascot.resize((m_size, m_size), Image.LANCZOS)
+                m_gap  = int(height * 0.03)
+                m_x    = (width - m_size) // 2
+                m_y    = block_top - m_gap - m_size
+                if m_y >= int(height * 0.05):            # only if it fits comfortably
+                    image.paste(mascot, (m_x, m_y), mascot)
 
         for i, line in enumerate(lines):
             line_cy = block_top + i * line_height + line_height // 2
@@ -1110,6 +1160,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONTS_DIR = os.path.join(BASE_DIR, "fonts")
+_GENRE_EMOJI_DIR = os.path.join(BASE_DIR, "assets", "genre_emoji")
+# Cute genre mascots shown above the title on no-art fallback canvases.
+# OpenMoji (CC-BY-SA 4.0) PNGs named directly by genre (e.g. "Horror.png"),
+# with "default.png" used for any genre without a dedicated mascot.
+_GENRE_EMOJI_DEFAULT = "default"
+
+_emoji_cache: dict[str, "Image.Image | None"] = {}
+
+
+def _load_genre_emoji(genre: str) -> "Image.Image | None":
+    """Load (and cache) the RGBA mascot for a genre, or None if unavailable."""
+    if genre not in _emoji_cache:
+        path = os.path.join(_GENRE_EMOJI_DIR, f"{genre}.png")
+        if not os.path.exists(path):
+            path = os.path.join(_GENRE_EMOJI_DIR, f"{_GENRE_EMOJI_DEFAULT}.png")
+        try:
+            _emoji_cache[genre] = Image.open(path).convert("RGBA")
+        except Exception:
+            _emoji_cache[genre] = None
+    return _emoji_cache[genre]
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 
@@ -1170,6 +1240,32 @@ def _load_configurator_html() -> str:
 async def health_check():
     """Lightweight liveness probe — no auth required, used by Docker healthcheck."""
     return {"status": "ok"}
+
+
+# TMDB genre name → id, used only by the debug canvas preview below.
+_DEBUG_GENRE_IDS = {
+    "Action": 28, "Adventure": 12, "Animation": 16, "Comedy": 35, "Crime": 80,
+    "Documentary": 99, "Drama": 18, "Family": 10751, "Fantasy": 14, "History": 36,
+    "Horror": 27, "Music": 10402, "Mystery": 9648, "Romance": 10749,
+    "Sci-Fi": 878, "Thriller": 53, "War": 10752, "Western": 37,
+}
+
+
+@app.get("/debug/canvas")
+async def debug_canvas(genre: str = "Action", title: str = "Sample Title"):
+    """
+    Preview a no-art fallback canvas for a given genre/title — renders the
+    genre-tinted gradient, the genre-aware title font, and the genre mascot.
+    Lets you eyeball each genre's cartoon without hunting for a poster-less id.
+    """
+    gid = _DEBUG_GENRE_IDS.get(genre)
+    canvas = _make_fallback_canvas([gid] if gid else None).convert("RGBA")
+    cfg = RequestConfig()
+    img = build_poster(canvas, "—", genre, cfg, fallback_title=title, no_poster=True)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=90)
+    return Response(content=buf.getvalue(), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1368,7 +1464,10 @@ async def get_poster(
                 return Response(status_code=304)
             _hit_resp = Response(content=cached_jpeg, media_type="image/jpeg")
             _hit_resp.headers["ETag"] = etag
-            if _cfg.CDN_CACHE_TTL > 0:
+            if _cfg.DISABLE_COMPOSITE_CACHE:
+                _hit_resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+                _hit_resp.headers["Pragma"] = "no-cache"
+            elif _cfg.CDN_CACHE_TTL > 0:
                 _hit_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
             return _hit_resp
     else:
@@ -1388,7 +1487,10 @@ async def get_poster(
             try:
                 _coal_resp = Response(content=await _existing_fut, media_type="image/jpeg")
                 _coal_resp.headers["ETag"] = f'"{final_cache_key}"'
-                if _cfg.CDN_CACHE_TTL > 0:
+                if _cfg.DISABLE_COMPOSITE_CACHE:
+                    _coal_resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+                    _coal_resp.headers["Pragma"] = "no-cache"
+                elif _cfg.CDN_CACHE_TTL > 0:
                     _coal_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
                 return _coal_resp
             except Exception:
@@ -1956,7 +2058,10 @@ async def get_poster(
         response = Response(content=img_bytes, media_type="image/jpeg")
         if final_cache_key is not None:
             response.headers["ETag"] = f'"{final_cache_key}"'
-        if _cfg.CDN_CACHE_TTL > 0:
+        if _cfg.DISABLE_COMPOSITE_CACHE:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        elif _cfg.CDN_CACHE_TTL > 0:
             response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
         return response
 

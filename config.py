@@ -73,7 +73,7 @@ SCORE_GLOW_ALPHA     = 40   # alpha of the glow applied
 
 # Logo Defaults
 
-LOGO_MAX_W_RATIO  = 0.84   # max width of logo
+LOGO_MAX_W_RATIO  = 0.75   # target/max width of logo — the span every logo normalises to
 LOGO_MAX_H_RATIO  = 0.17   # max height of logo
 LOGO_BOTTOM_RATIO = 0.28   # distance of logo from the bottom
 DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", "en")
