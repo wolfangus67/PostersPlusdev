@@ -20,5 +20,4 @@ to OpenMoji and license your derivatives under the same CC BY-SA 4.0 terms.
 ## Note
 
 These mascots are placeholders and may be replaced with differently-licensed
-artwork in the future. If they are replaced, update this notice accordingly (or
-remove it if the replacements carry no attribution requirement).
+artwork in the future.
