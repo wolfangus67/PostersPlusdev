@@ -1296,6 +1296,15 @@ def _sash_body_cairo(
     return Image.fromarray(rgba, "RGBA")
 
 
+# Awards whose winner and nominee share the same label text (see
+# parse_mdblist_awards), so the notch badge — which can't use colour for win/nom
+# because notch_style owns the trim colour — prefixes a ★ to mark the winner,
+# mirroring the star convention in score/compact modes.  Emmy is excluded (its
+# labels already say "Winner"/"Nominee"); festival winners are intentionally
+# left unmarked.  Strings must match the labels emitted by parse_mdblist_awards.
+_STAR_WIN_AWARDS = {"Best Picture", "Golden Globe"}
+
+
 def draw_award_badge(
     image: Image.Image,
     label: str,
@@ -1345,6 +1354,15 @@ def draw_award_badge(
     _SILVER = (192, 192, 200)
     _GOLD   = (212, 175, 55)
     trim_rgb = _SILVER if notch_style == "silver" else (_GOLD if notch_style == "gold" else border_rgb)
+
+    # Winner marker: for awards whose win/nom labels are identical (Best Picture,
+    # Golden Globe) the trim colour can't disambiguate them in notch mode (the
+    # user's notch_style fixes it), so prefix a ★ for the winner — consistent
+    # with the star in score/compact modes.  The badge width auto-expands to fit.
+    # Double space after the star so it sits clearly left of the text rather than
+    # crowding the first letter.
+    if sash_type == "win" and label in _STAR_WIN_AWARDS:
+        label = f"★  {label}"
 
     # ── Dimensions ───────────────────────────────────────────────────────────
     badge_h = int(height * 0.075 * size_ratio_h)
