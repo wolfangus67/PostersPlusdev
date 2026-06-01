@@ -392,12 +392,32 @@ def prune_caches() -> None:
 
             db.commit()
 
-        # Reclaim free pages left by the deletes.  INCREMENTAL vacuum moves a
-        # few pages per call without locking the DB for long.  No-op on DBs
-        # created before auto_vacuum=INCREMENTAL was enabled (see init_db).
+        # Reclaim free pages left by the deletes.
         with _db_lock:
-            get_db().execute("PRAGMA incremental_vacuum(100)")
-            get_db().commit()
+            db = get_db()
+            auto_vac = db.execute("PRAGMA auto_vacuum").fetchone()[0]
+            if auto_vac == 2:   # INCREMENTAL — cheap, moves a few pages, no long lock
+                db.execute("PRAGMA incremental_vacuum(100)")
+                db.commit()
+            else:
+                # Legacy DB created before incremental auto-vacuum (auto_vacuum=0):
+                # the incremental pragma is a no-op there, so freed pages (e.g. from
+                # evicted composite JPEGs) never return and the file bloats.  Do a
+                # one-time conversion: enable INCREMENTAL then full VACUUM to rewrite
+                # the DB compactly.  Gated on meaningful dead space so it only fires
+                # when worthwhile, and it runs here in the background prune task
+                # (off the event loop), so it never blocks request handling.
+                page = db.execute("PRAGMA page_size").fetchone()[0]
+                free = db.execute("PRAGMA freelist_count").fetchone()[0]
+                if page * free > 20 * 1024 * 1024:   # >20 MB reclaimable
+                    logger.info(
+                        f"Cache DB: one-time conversion to incremental auto-vacuum, "
+                        f"reclaiming ~{page * free / 1e6:.0f} MB of dead space…"
+                    )
+                    db.commit()                       # close any open transaction
+                    db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+                    db.execute("VACUUM")
+                    logger.info("Cache DB vacuum complete")
 
     except Exception as exc:
         logger.error(f"Cache prune error: {exc}")

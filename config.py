@@ -74,7 +74,7 @@ SCORE_GLOW_ALPHA     = 40   # alpha of the glow applied
 # Logo Defaults
 
 LOGO_MAX_W_RATIO  = 0.75   # target/max width of logo — the span every logo normalises to
-LOGO_MAX_H_RATIO  = 0.17   # max height of logo
+LOGO_MAX_H_RATIO  = 0.25   # max height of logo (paired with LOGO_ABS_MAX_H px cap)
 LOGO_BOTTOM_RATIO = 0.28   # distance of logo from the bottom
 DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", "en")
 
@@ -140,12 +140,18 @@ def _parse_bool_env(key: str, default: bool = False) -> bool:
 
 # Logo legibility: when a flat logo's average colour is too close to the poster
 # background, recolour it (white / black / complementary accent) so it reads.
-# Experimental — set LOGO_CONTRAST_RESCUE=false to disable and always keep the
-# logo's original colours.
-LOGO_CONTRAST_RESCUE       = _parse_bool_env("LOGO_CONTRAST_RESCUE", True)
+# Experimental and off by default while it's being tested — it can mis-handle
+# some logos.  Set LOGO_CONTRAST_RESCUE=true to enable.
+LOGO_CONTRAST_RESCUE       = _parse_bool_env("LOGO_CONTRAST_RESCUE", False)
 # Emit per-logo sizing telemetry (source dims, aspect, final dims) at INFO level.
 # Off by default — handy when tuning the logo size caps.
 DEBUG_LOGO_SIZING          = _parse_bool_env("DEBUG_LOGO_SIZING", False)
+# Logo fill-stretch: a slim logo whose clamped size leaves it looking lost may be
+# enlarged toward its size cap by up to this factor (one axis only) so it has more
+# presence.  1.0 = no enlargement.  Off by default — set LOGO_STRETCH_DISABLED=false
+# to enable it; LOGO_STRETCH_FACTOR then sets how aggressive the enlargement is.
+LOGO_STRETCH_DISABLED      = _parse_bool_env("LOGO_STRETCH_DISABLED", True)
+LOGO_STRETCH_FACTOR        = max(1.0, float(os.environ.get("LOGO_STRETCH_FACTOR", "1.2")))
 
 # Detect burned-in title text on posters TMDB mislabelled as "textless".  When
 # detected, PostersPlus skips compositing its own logo/title so you don't get a

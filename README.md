@@ -128,7 +128,9 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
 | `DISABLE_COMPOSITE_CACHE` | - | Set to `true` to skip composite cache reads and writes entirely. Every request re-renders from scratch. For development only |
-| `LOGO_CONTRAST_RESCUE` | `true` | Recolour a flat logo (white/black/accent) when it blends into the poster background. Multi-colour/outline logos are never touched. Set `false` to always keep original colours |
+| `LOGO_CONTRAST_RESCUE` | `false` | Recolour a flat logo (white/black/accent) when it blends into the poster background. Multi-colour/outline logos are never touched. Experimental — off by default while tested; set `true` to enable |
+| `LOGO_STRETCH_DISABLED` | `true` | Fill-stretch is off by default — every logo is kept at its true clamped size. Set `false` to enable the stretch below |
+| `LOGO_STRETCH_FACTOR` | `1.2` | When stretching is enabled, a slim logo is enlarged toward its size cap by up to this factor (one axis only). `1.0` = no enlargement |
 | `DEBUG_LOGO_SIZING` | `false` | Log per-logo sizing telemetry at INFO level. For tuning only |
 | `TEXTLESS_TEXT_DETECTION` | `true` | Detect burned-in title text on posters TMDB mislabelled as "textless" and skip our own logo so the title isn't doubled. Set `false` to opt out |
 | `TEXTLESS_DETECTION_MAX_VOTES` | `300` | Only run text detection on titles with at most this many TMDB votes (mislabels concentrate in the long tail; popular titles are trusted) |

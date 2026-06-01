@@ -55,6 +55,8 @@ from config import (
     LOGO_MAX_H_RATIO,
     LOGO_BOTTOM_RATIO,
     LOGO_CONTRAST_RESCUE,
+    LOGO_STRETCH_DISABLED,
+    LOGO_STRETCH_FACTOR,
     DEBUG_LOGO_SIZING,
 )
 
@@ -147,11 +149,12 @@ LOGO_ASPECT_PIVOT = 2.8    # neutral aspect (wider → "wide", narrower → "tal
 # Absolute pixel ceiling on rendered logo height — a hard stop so a tall, only
 # moderately-wide logo can never dominate the poster, regardless of the Height
 # ratio slider or aspect flex.  ~25 % of a 750 px poster.
-LOGO_ABS_MAX_H = 150
+LOGO_ABS_MAX_H = 170
 # Single-axis fill stretch: a slim logo whose under-cap dimension would leave it
 # looking lost may be stretched up to this factor toward its cap (width OR
-# height, never both).  Height stays bounded by LOGO_ABS_MAX_H.
-LOGO_FILL_STRETCH = 2
+# height, never both).  Height stays bounded by LOGO_ABS_MAX_H.  Env-tunable via
+# LOGO_STRETCH_FACTOR; skipped entirely when LOGO_STRETCH_DISABLED is set.
+LOGO_FILL_STRETCH = LOGO_STRETCH_FACTOR
 # The height stretch only fires when the logo's clamped height is below this
 # fraction of its height cap — i.e. only genuinely short/slim logos are lifted,
 # while normally-proportioned logos are left at their true aspect ratio.
@@ -1124,13 +1127,14 @@ def composite_logo(
     # logo is: one sitting right at the trigger gets ~1.0× (barely touched),
     # while a far-shorter logo ramps up toward the full LOGO_FILL_STRETCH.
     # This avoids over-stretching logos that only just qualify.
-    trigger_h = eff_max_h * LOGO_FILL_HEIGHT_TRIGGER
-    if new_h < trigger_h:
-        t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
-        factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
-        new_h  = min(eff_max_h, float(LOGO_ABS_MAX_H), new_h * factor)
-    elif new_w < eff_max_w:
-        new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
+    if not LOGO_STRETCH_DISABLED and LOGO_FILL_STRETCH > 1.0:
+        trigger_h = eff_max_h * LOGO_FILL_HEIGHT_TRIGGER
+        if new_h < trigger_h:
+            t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
+            factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
+            new_h  = min(eff_max_h, float(LOGO_ABS_MAX_H), new_h * factor)
+        elif new_w < eff_max_w:
+            new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
 
     # Logo sizing telemetry — gated behind DEBUG_LOGO_SIZING (off by default).
     if DEBUG_LOGO_SIZING:
