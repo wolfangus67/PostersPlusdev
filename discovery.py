@@ -269,6 +269,7 @@ _SASH_TYPES: dict[str, str] = {
     "pic_noms":        "nom",       # silver — Best Picture nom + Major Emmy nom (film vs TV, never coexist)
     "gg_noms":         "nom",       # silver — Golden Globe nomination
     "emmy_noms":       "nom",       # silver — legacy alias for pic_noms
+    "noms":            "nom",       # silver — legacy catch-all for any nomination
     "festival":        "win",       # gold — major festival win is prestige-equivalent to Oscar
     "studio":          "prestige",  # purple — production credit
     "director":        "prestige",  # purple — production credit

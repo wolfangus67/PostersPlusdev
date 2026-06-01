@@ -1524,7 +1524,7 @@
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
             <div class="field">
-              <label class="field-label">Language</label>
+              <label class="field-label">Native Logo Language</label>
               <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English</option>
                 <option value="es">Spanish</option>
@@ -1568,12 +1568,13 @@
               </select>
             </div>
             <div class="field" style="margin-top:6px;">
-              <label class="field-label">Missing Logo Fallback</label>
-              <select id="cfg-logo-native-fallback" onchange="build(); queuePreviewReload()">
-                <option value="true" selected>Native Language Logo</option>
-                <option value="false">Translated Title Text</option>
+              <label class="field-label">Logo Priority</label>
+              <select id="cfg-logo-priority" onchange="build(); queuePreviewReload()">
+                <option value="native_original" selected>Native Language &gt; Original Language &gt; Text</option>
+                <option value="original_native">Original Language &gt; Native Language &gt; Text</option>
+                <option value="native_text">Native Language &gt; Text</option>
               </select>
-              <div class="field-hint">Fetch a logo in the original language before falling back to Metahub or basic text rendering</div>
+              <div class="field-hint">Order logos are chosen in. "Native" = your logo language above; "Original" = the content's own language (e.g. Japanese for anime); "Text" = render the translated title as text.</div>
             </div>
             <div class="field" style="margin-top:6px;">
               <label class="field-label">Top Vignette</label>
@@ -1797,6 +1798,14 @@
                 <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
                 <span class="range-val" id="rng-lb">0.28</span>
               </div>
+            </div>
+            <div class="field" style="margin-top:6px;">
+              <button type="button" onclick="openFallbackGallery()"
+                      style="width:100%; padding:8px 10px; border-radius:6px; cursor:pointer;
+                             background:#1e1e1e; color:#e0e0e0; border:1px solid #444;">
+                🖼 Preview fallback art
+              </button>
+              <div class="field-hint" style="margin-top:4px;">Opens a gallery of the genre mascots &amp; fonts used when a title has no poster art.</div>
             </div>
           </div>
         </div>
@@ -2311,6 +2320,14 @@ function _initRangeValEditing() {
       queuePreviewReload();
     });
   });
+}
+
+function openFallbackGallery() {
+  const ak = vEl('cfg-access-key');
+  const url = ak
+    ? `/debug/fallback-gallery?access_key=${encodeURIComponent(ak)}`
+    : '/debug/fallback-gallery';
+  window.open(url, '_blank', 'noopener');
 }
 
 async function fetchServerCaps() {
@@ -2976,7 +2993,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // ── Logo ───────────────────────────────────────────────────────────────────
   params.set('textless',              c('tog-textless') ? 'true' : 'false');
   params.set('logo_language',         logoLanguage);
-  params.set('logo_native_fallback',  vEl('cfg-logo-native-fallback') || 'true');
+  params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
   params.set('logo_max_w_ratio',      n('cfg-logo-w').toFixed(2));
   params.set('logo_max_h_ratio',  n('cfg-logo-h').toFixed(2));
   params.set('logo_bottom_ratio', n('cfg-logo-bottom').toFixed(2));
@@ -3312,7 +3329,13 @@ function importUrl(urlStr) {
 
   // ── Logo language ───────────────────────────────────────────────────────
   if (p.has('logo_language'))        _setEl('cfg-language',             p.get('logo_language'));
-  if (p.has('logo_native_fallback')) _setEl('cfg-logo-native-fallback', p.get('logo_native_fallback'));
+  if (p.has('logo_priority')) {
+    _setEl('cfg-logo-priority', p.get('logo_priority'));
+  } else if (p.has('logo_native_fallback')) {
+    // Legacy boolean: true → native then original, false → native only.
+    _setEl('cfg-logo-priority',
+           (p.get('logo_native_fallback') === 'false') ? 'native_text' : 'native_original');
+  }
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
     let _tg = (p.get('top_gradient') || '').toLowerCase();
@@ -3539,7 +3562,8 @@ initCustomMobileSliders();
             <dt>Search</dt>       <dd>Type in the name of any movie or show and see how it'll look. Be warned that clients use various sizes and rounding, you may have to tweak to your own client.</dd>
             <dt>TMDB Key</dt>     <dd>Required for poster art, logos, and metadata. If the server host has set this, you don't need it.</dd>
             <dt>MDBlist Key</dt>  <dd>Required for ratings, awards, and keyword data. If the server host has set this you don't need it.</dd>
-            <dt>Language</dt>    <dd>Posters+ will make the request in the language that you use, if it's not available it'll fallback to English.</dd>
+            <dt>Native Logo Language</dt>    <dd>The language Posters+ requests title logos in. If it's unavailable it falls back to English.</dd>
+            <dt>Logo Priority</dt>    <dd>Order logos are picked in. "Native" is your Native Logo Language above; "Original" is the content's own language (e.g. Japanese for anime); "Text" renders the translated title as text. Choose whether your language or the content's original language wins, or restrict to your language only.</dd>
             <dt>Top Vignette</dt><dd>A dark fade across the top of the poster that keeps badges and age ratings readable over bright art. Four levels: Off / Low (subtle), Medium (balanced), High (strongest — the legacy look). Lower presets work better on art that's already dark up top.</dd>
             <dt>Bottom Vignette</dt><dd>Same four-level scale as the Top Vignette but for the bottom of the poster. Mainly useful if you've hidden the rating label and don't need the dark fade behind it — drop to Low or Off to let the art breathe. Use High (default) or Medium when you have a Score Bar / Clean / Minimalist / Compact label down there.</dd>
           </dl>

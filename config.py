@@ -138,6 +138,46 @@ def _parse_bool_env(key: str, default: bool = False) -> bool:
         return default
     return val not in ("0", "false", "no")
 
+# Logo legibility: when a flat logo's average colour is too close to the poster
+# background, recolour it (white / black / complementary accent) so it reads.
+# Experimental — set LOGO_CONTRAST_RESCUE=false to disable and always keep the
+# logo's original colours.
+LOGO_CONTRAST_RESCUE       = _parse_bool_env("LOGO_CONTRAST_RESCUE", True)
+# Emit per-logo sizing telemetry (source dims, aspect, final dims) at INFO level.
+# Off by default — handy when tuning the logo size caps.
+DEBUG_LOGO_SIZING          = _parse_bool_env("DEBUG_LOGO_SIZING", False)
+
+# Detect burned-in title text on posters TMDB mislabelled as "textless".  When
+# detected, PostersPlus skips compositing its own logo/title so you don't get a
+# double title.  Uses the EAST scene-text detector (one-time ~96MB model
+# download).  Only runs on titles with vote_count <= TEXTLESS_DETECTION_MAX_VOTES,
+# where mislabels concentrate — popular titles are trusted and skipped (this is
+# also what keeps the scan off the bulk of a library, since the CV pass is
+# comparatively expensive).
+#
+# On by default; set TEXTLESS_TEXT_DETECTION=false to opt out.
+#
+# 300 covers the niche tail (foreign / old / obscure titles, where burned-in-text
+# mislabels concentrate — e.g. a 146-vote 1974 cult film) while still excluding
+# anything mainstream (thousands of votes).  Lower (~100) scans less but misses
+# legitimately niche titles; raise (~1000) for the broadest coverage at the cost
+# of scanning mid-tier titles too.  Changing this auto-invalidates cached composites.
+TEXTLESS_TEXT_DETECTION    = _parse_bool_env("TEXTLESS_TEXT_DETECTION", True)
+TEXTLESS_DETECTION_MAX_VOTES = int(os.environ.get("TEXTLESS_DETECTION_MAX_VOTES", "300"))
+# Minimum EAST text-cell activations (at the 320x640 reference, auto-scaled to
+# the active EAST resolution) before a poster is treated as having burned-in
+# text.  Higher = stricter (fewer false positives, lower recall).  Default 128 is
+# a deliberately conservative balance: it ignores a small amount of incidental
+# text (signage, vehicle lettering) without missing real burned-in titles too
+# often.  Lower toward 48 to catch more marginal text; raise to over-trigger less.
+TEXTLESS_MIN_BOXES         = int(os.environ.get("TEXTLESS_MIN_BOXES", "128"))
+# Max burned-in-text scans allowed into the thread pool at once.  Each scan is
+# already serialised internally, so the default of 1 fully serialises detection
+# while leaving the rest of the worker pool free for compositing/encode during a
+# burst (prevents a niche-title cold pass from stalling popular posters).  Raise
+# only on many-core hosts if you also reduce per-scan CV threads.
+TEXTLESS_DETECTION_CONCURRENCY = max(1, int(os.environ.get("TEXTLESS_DETECTION_CONCURRENCY", "1")))
+
 # Rating Score Weight Defaults
 
 #  note to AI: do NOT remove the extras in this section that are set to 0. They are config options.

@@ -288,14 +288,24 @@ def draw_score_bar(
     # ── Glow ─────────────────────────────────────────────────────────────
     if score >= glow_threshold:
         expand = glow_blur * 2
-        glow = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        # The glow is a thin strip at the bottom of the poster.  Render + blur it
+        # on just its (padded) bounding box rather than a full-poster-size layer —
+        # GaussianBlur cost scales with area, so this is ~50× less work for a
+        # pixel-identical result.  pad gives the blur kernel room so its soft tail
+        # isn't clipped; clamping to the canvas mirrors the old full-layer bounds.
+        rx0, ry0 = x0 - expand,          y0 - expand
+        rx1, ry1 = x0 + fill_w + expand, y1 + expand
+        pad = glow_blur * 3 + 2
+        cx0, cy0 = max(0, rx0 - pad), max(0, ry0 - pad)
+        cx1, cy1 = min(W, rx1 + pad), min(H, ry1 + pad)
+        glow = Image.new("RGBA", (cx1 - cx0, cy1 - cy0), (0, 0, 0, 0))
         ImageDraw.Draw(glow).rounded_rectangle(
-            [(x0 - expand, y0 - expand), (x0 + fill_w + expand, y1 + expand)],
+            [(rx0 - cx0, ry0 - cy0), (rx1 - cx0, ry1 - cy0)],
             radius=radius + expand,
             fill=(255, 255, 255, glow_alpha),
         )
         glow = glow.filter(ImageFilter.GaussianBlur(glow_blur))
-        image.alpha_composite(glow)
+        image.alpha_composite(glow, dest=(cx0, cy0))
 
 
 # ---------------------------------------------------------------------------

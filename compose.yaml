@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: ./dockerfile
+      args:
+        # Bake the EAST text-detection model into the image (default). Set
+        # BAKE_EAST_MODEL=false in your .env for a lean image that downloads the
+        # model once at runtime instead.
+        BAKE_EAST_MODEL: "${BAKE_EAST_MODEL:-true}"
     image: PostersPlus
     ports:
       - "8000:8000"

@@ -28,6 +28,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
+# Bake the EAST text-detection model into the image.  TEXTLESS_TEXT_DETECTION is
+# on by default, so baking avoids the one-time ~96MB runtime download that would
+# otherwise stall the first low-vote textless request, and it survives cache-
+# volume wipes / works on air-gapped hosts.  Adds ~96MB to the image, and makes
+# the build depend on EAST_MODEL_URL being reachable.  Opt out for a lean image
+# (e.g. if you disable detection) — the model then downloads once at runtime:
+#   docker build --build-arg BAKE_EAST_MODEL=false ...
+#   (or set BAKE_EAST_MODEL=false in .env when building via compose)
+ARG BAKE_EAST_MODEL=true
+ARG EAST_MODEL_URL=https://github.com/oyyd/frozen_east_text_detection.pb/raw/master/frozen_east_text_detection.pb
+RUN if [ "$BAKE_EAST_MODEL" = "true" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends curl && \
+      mkdir -p /app/models && \
+      curl -fsSL "$EAST_MODEL_URL" -o /app/models/frozen_east_text_detection.pb && \
+      apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
 RUN adduser --disabled-password --gecos '' appuser
 
 # Copy app files and set ownership on everything except the cache dir,

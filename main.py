@@ -153,6 +153,20 @@ _rating_fetch_inflight:         dict[str, asyncio.Event] = {}
 _rating_backoff:                dict[str, float]          = {}  # imdb_id -> retry-after (loop time)
 _rating_fail_count:             dict[str, int]            = {}  # imdb_id -> consecutive network-failure count (for escalating back-off)
 _mdblist_semaphore:             "asyncio.Semaphore | None" = None  # caps concurrent MDBlist HTTP calls; created inside event loop
+# Caps how many burned-in-text scans may occupy thread-pool workers at once.
+# The scan is already serialised by text_detect._infer_lock, so extra in-flight
+# scan tasks would just block on that lock while squatting on pool workers —
+# starving compositing/encode of the rest of a poster burst.  Gating admission
+# here keeps the shared executor free.  Created inside the event loop.
+_detect_semaphore:              "asyncio.Semaphore | None" = None
+
+
+def _get_detect_semaphore() -> "asyncio.Semaphore":
+    """Lazily create the detection-admission semaphore inside the event loop."""
+    global _detect_semaphore
+    if _detect_semaphore is None:
+        _detect_semaphore = asyncio.Semaphore(_cfg.TEXTLESS_DETECTION_CONCURRENCY)
+    return _detect_semaphore
 # Per-key cooldown timestamps (event-loop time). Keyed by the API key string so
 # rotation is independent — a rate-limited key stands down while the other serves.
 _mdblist_key_cooldown: dict[str, float] = {}
@@ -199,11 +213,14 @@ from cache import (
     get_cached_rating,
     get_cached_final_poster,
     set_cached_final_poster,
+    get_cached_text_detection,
+    set_cached_text_detection,
     init_db,
     is_digital_release,
     set_cached_rating,
     delete_cached_tmdb_metadata,
     prune_caches,
+    get_cache_stats,
 )
 from digital_release import digital_release_poll_loop
 import config as _cfg
@@ -223,7 +240,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label
-from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status
+from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status, svg_logo_supported, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -304,6 +321,16 @@ def _resolve_mdblist_key(query_key: str) -> str | None:
     return None
 
 
+def _detection_vote_ok(vote_count: int | None) -> bool:
+    """
+    Text detection only runs on titles we can confirm are low-vote (where TMDB
+    mislabels concentrate).  A NULL/unknown vote_count — e.g. a metadata row
+    cached before the column existed — must NOT pass the gate, otherwise
+    detection would run on every cached title regardless of popularity.
+    """
+    return vote_count is not None and vote_count <= _cfg.TEXTLESS_DETECTION_MAX_VOTES
+
+
 # ---------------------------------------------------------------------------
 # Per-request configuration
 # ---------------------------------------------------------------------------
@@ -359,11 +386,13 @@ class RequestConfig:
     tv_weights:    dict | None = None
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
-    # When True (default): fall through to the content's original-language logo
-    # when no preferred-language logo exists (e.g. "La Cena" for a Spanish film).
-    # When False: skip native-language logos and let the text-title fallback render
-    # the translated title instead (e.g. "The Dinner").
-    logo_native_fallback: bool = True
+    # Logo resolution priority.  "native" = the viewer's chosen logo_language
+    # (e.g. en); "original" = the content's own original language (e.g. ja for
+    # an anime).  "text" = render the translated title as text.
+    #   "native_original" (default): native → original → text
+    #   "original_native":           original → native → text
+    #   "native_text":               native → text (no original-language logo)
+    logo_priority: str = "native_original"
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
     muted: bool = False
     textless: bool = False
@@ -536,7 +565,12 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.tv_weights = _parse_weights(params.get("tv_weights"), tv_sources)
 
     cfg.logo_language        = (params.get("logo_language", cfg.logo_language).strip().lower())
-    cfg.logo_native_fallback = _b("logo_native_fallback", cfg.logo_native_fallback)
+    _lp = params.get("logo_priority")
+    if _lp in ("native_original", "original_native", "native_text"):
+        cfg.logo_priority = _lp
+    elif "logo_native_fallback" in params:
+        # Legacy param (boolean): true → native_original, false → native_text.
+        cfg.logo_priority = "native_original" if _b("logo_native_fallback", True) else "native_text"
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
 
     return cfg
@@ -598,8 +632,8 @@ _TOP_GRADIENT_LEVELS: dict[str, tuple[float, int] | None] = {
 _BOTTOM_GRADIENT_LEVELS: dict[str, tuple[float, int] | None] = {
     "off":    None,
     "low":    (0.30, 180),
-    "medium": (0.40, 220),
-    "high":   (0.50, 255),
+    "medium": (0.40, 210),
+    "high":   (0.50, 225),
 }
 # Easing exponent shared across all bottom-gradient presets — controls the
 # curve shape (1.0 = linear; >1 starts darker at the bottom and fades faster
@@ -637,6 +671,14 @@ _GENRE_TINT: dict[str, tuple[float, float, float]] = {
     "News":        (0.3, 0.5, 2.6),   # steel blue
 }
 _FALLBACK_DEFAULT_TINT = (1.0, 1.0, 1.4)   # neutral cool blue
+
+# Display-only label shortenings.  Some genre names are too wide for the poster
+# label strip; shortening them reads better than shrinking the font.  These map
+# the genre name to its *printed* form only — the original genre key is still
+# used for font / colour / mascot / background lookups.
+_GENRE_LABEL_OVERRIDES: dict[str, str] = {
+    "Documentary": "Doc",
+}
 
 
 def _make_fallback_canvas(genre_ids: list[int] | None = None) -> Image.Image:
@@ -690,6 +732,10 @@ def build_poster(
 
     width, height = image.size
     draw = ImageDraw.Draw(image)
+
+    # Printed form of the genre (e.g. "Documentary" → "Doc").  Use this only for
+    # text drawn on the poster; keep `genre` for font / colour / mascot lookups.
+    genre_label = _GENRE_LABEL_OVERRIDES.get(genre, genre)
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -829,31 +875,22 @@ def build_poster(
         }
         _font_file = _GENRE_FONTS.get(genre, "NotoSerif-Bold.ttf")
 
-        # Multi-line aware fallback title rendering.
-        #
-        # Font size is scaled down as title length grows so long titles don't
-        # feel enormous.  The formula maps character count to a size ratio:
-        #   ≤10 chars  → 0.130  (~65 px on a 500 px wide poster)
-        #   20 chars   → 0.108
-        #   27 chars   → 0.094   ("Anoranzas del viejo cartago")
-        #   35 chars   → 0.078
-        #   ≥40 chars  → 0.070  (floor)
-        # A 2-line target + 80 % width margin keeps the text comfortably inside
-        # the poster without touching the edges.  The shrink loop is a safety
-        # net for very long or single-word titles that resist wrapping.
-        max_width      = int(width * 0.80)
+        # Fallback-title rendering, sized to fill the SAME envelope a logo fills
+        # (cfg.logo_max_w_ratio width × logo_max_h_ratio height) so a text title
+        # looks as substantial as a logo would — short titles like "SELF-HELP"
+        # grow to fill the width instead of being pinned tiny by a char-count
+        # heuristic.  The logo size ratios therefore tune the fallback text too.
+        max_w          = int(width  * cfg.logo_max_w_ratio)
+        max_h          = int(height * cfg.logo_max_h_ratio)
         # Sit on the exact same vertical centre line composite_logo uses, so a
         # text-title poster lines up with a logo poster in the same row.
         title_cy       = logo_centre_y(height, cfg.logo_bottom_ratio)
-        _char_count    = len(fallback_title)
-        _raw_ratio     = 0.142 - _char_count * 0.0018
-        font_size      = int(width * max(0.070, min(0.130, _raw_ratio)))
-        MIN_FONT_SIZE  = 26
+        MIN_FONT_SIZE  = 22
         MAX_LINES      = 2
         FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
 
         def _wrap_lines(text: str, current_font) -> list[str]:
-            """Greedy word-wrap: each line packs as many words as fit within max_width."""
+            """Greedy word-wrap: each line packs as many words as fit within max_w."""
             words = text.split()
             if not words:
                 return []
@@ -861,8 +898,7 @@ def build_poster(
             current: list[str] = []
             for word in words:
                 candidate = " ".join(current + [word])
-                bb = draw.textbbox((0, 0), candidate, font=current_font)
-                if bb[2] - bb[0] <= max_width or not current:
+                if draw.textlength(candidate, font=current_font) <= max_w or not current:
                     current.append(word)
                 else:
                     lines.append(" ".join(current))
@@ -871,22 +907,29 @@ def build_poster(
                 lines.append(" ".join(current))
             return lines
 
-        # Shrink font until the wrapped layout fits in MAX_LINES, then stop.
+        # Pick the largest font whose wrapped block fits the logo envelope: scan
+        # high→low and take the first fit.  A 2-line block gets a taller budget
+        # than a single logo, since two stacked lines read fine a bit beyond one
+        # logo's height.  Falls back to the wrapped layout at MIN_FONT_SIZE.
         try:
-            font = ImageFont.truetype(FONT_PATH, font_size)
-        except IOError:
-            font = ImageFont.load_default()
-            lines = [fallback_title]
-        else:
-            while True:
-                lines = _wrap_lines(fallback_title, font)
-                if len(lines) <= MAX_LINES or font_size <= MIN_FONT_SIZE:
+            font_size = MIN_FONT_SIZE
+            font      = ImageFont.truetype(FONT_PATH, font_size)
+            lines     = _wrap_lines(fallback_title, font)
+            for _fs in range(int(height * 0.26), MIN_FONT_SIZE - 1, -2):
+                _f  = ImageFont.truetype(FONT_PATH, _fs)
+                _ls = _wrap_lines(fallback_title, _f)
+                if len(_ls) > MAX_LINES:
+                    continue
+                _widest  = max((draw.textlength(ln, font=_f) for ln in _ls), default=0)
+                _block_h = int(_fs * 1.15) * len(_ls)
+                _budget  = max_h if len(_ls) == 1 else int(max_h * 1.7)
+                if _widest <= max_w and _block_h <= _budget:
+                    font, font_size, lines = _f, _fs, _ls
                     break
-                font_size -= 4
-                try:
-                    font = ImageFont.truetype(FONT_PATH, font_size)
-                except IOError:
-                    break
+        except OSError:
+            font      = ImageFont.load_default()
+            font_size = MIN_FONT_SIZE
+            lines     = [fallback_title]
 
         # Centre the multi-line block vertically around title_cy.
         line_height    = int(font_size * 1.15)
@@ -945,7 +988,7 @@ def build_poster(
                 sash_result if (_append_sash and sash_result) else (None, None)
             )
 
-            _pre_sash = [genre]
+            _pre_sash = [genre_label]
             if _append_year and release_year:
                 _pre_sash.append(str(release_year))
             _label_main = " · ".join(_pre_sash)
@@ -989,7 +1032,7 @@ def build_poster(
                 _score_text = "10" if score >= 100 else f"{score / 10:.1f}"
             else:
                 _score_text = str(score)
-            label = f"{genre} ★ {_score_text}"
+            label = f"{genre_label} ★ {_score_text}"
             rating_cy = height * cfg.numeric_score_y_offset
 
             try:
@@ -1017,7 +1060,7 @@ def build_poster(
             right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
 
             year_text  = str(release_year or "")
-            genre_text = genre
+            genre_text = genre_label
 
             pip_gap = int(font_size * 0.55)
             pip_w   = max(4, int(font_size * 0.18))
@@ -1065,7 +1108,7 @@ def build_poster(
             )
             draw_compact_label(
                 image,
-                genre=genre,
+                genre=genre_label,
                 year=release_year,
                 score=score,
                 sash_label=_sash_label,
@@ -1142,6 +1185,35 @@ async def lifespan(app: FastAPI):
     if _cfg.QUALITY_SOURCE not in ("aiostreams", "scraper"):
         logger.warning(f"Unknown QUALITY_SOURCE={_cfg.QUALITY_SOURCE!r} — defaulting to aiostreams behaviour.")
     _configurator_html = _load_configurator_html()
+    # Warm the genre fallback backgrounds into memory so no-art posters render
+    # with zero extra latency (same idea as the badge cache warm-up).
+    try:
+        _bg_dir = _GENRE_BG_DIR
+        if os.path.isdir(_bg_dir):
+            _warmed = 0
+            for _fn in os.listdir(_bg_dir):
+                if _fn.lower().endswith(".png"):
+                    _g = _fn[:-4]
+                    if _load_genre_background(_g) is not None:
+                        _warmed += 1
+            logger.info(f"Genre backgrounds warmed: {_warmed} entries")
+        else:
+            logger.info("No genre background art found — using gradient fallbacks")
+    except Exception as exc:
+        logger.warning(f"Genre background warm-up skipped: {exc}")
+    # Burned-in-text detection: fetch + load the EAST model in the background so
+    # the first low-vote textless request isn't blocked by the one-time ~96 MB
+    # download.  On by default; skipped when the operator has opted out.
+    if _cfg.TEXTLESS_TEXT_DETECTION:
+        async def _warm_east():
+            try:
+                from text_detect import warm_model
+                ok = await asyncio.get_running_loop().run_in_executor(None, warm_model)
+                logger.info(f"Burned-in-text detection {'ready' if ok else 'unavailable'}")
+            except Exception as exc:
+                logger.warning(f"EAST warm-up failed: {exc}")
+        asyncio.create_task(_warm_east())
+
     prune_task   = asyncio.create_task(_cache_prune_loop())
     digital_task = asyncio.create_task(digital_release_poll_loop(_HTTP_CLIENT))
     yield
@@ -1180,6 +1252,31 @@ def _load_genre_emoji(genre: str) -> "Image.Image | None":
         except Exception:
             _emoji_cache[genre] = None
     return _emoji_cache[genre]
+
+
+# ── Genre fallback backgrounds ────────────────────────────────────────────
+# Atmospheric 500x750 PNGs (procedurally generated by genre_backgrounds.py, or
+# hand-made overrides dropped into the same folder) used as the base for no-art
+# fallback posters instead of the flat gradient.  Cached in memory; a *copy* is
+# returned per request because build_poster draws onto the base.
+_GENRE_BG_DIR = os.path.join(BASE_DIR, "static", "genre_bg")
+_genre_bg_cache: dict[str, "Image.Image | None"] = {}
+
+
+def _load_genre_background(genre: str) -> "Image.Image | None":
+    """Return a fresh RGBA copy of the genre background, or None if none exists."""
+    if genre not in _genre_bg_cache:
+        path = os.path.join(_GENRE_BG_DIR, f"{genre}.png")
+        if not os.path.exists(path):
+            path = os.path.join(_GENRE_BG_DIR, "default.png")
+        try:
+            _genre_bg_cache[genre] = Image.open(path).convert("RGBA")
+        except Exception:
+            _genre_bg_cache[genre] = None
+    base = _genre_bg_cache[genre]
+    return base.copy() if base is not None else None
+
+
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 
@@ -1242,6 +1339,42 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/stats")
+async def stats(access_key: str = ""):
+    """
+    Operator diagnostics: cache row counts / sizes plus live runtime state
+    (in-flight renders, background quality fetches, MDBList key cooldowns).
+    Gated behind the access key when one is configured.
+    """
+    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    now = asyncio.get_running_loop().time()
+    keys = _cfg.SERVER_MDBLIST_KEYS
+    mdblist_keys = []
+    for i, k in enumerate(keys):
+        cd = _mdblist_key_cooldown.get(k, 0.0)
+        mdblist_keys.append({
+            "index":         i + 1,
+            "active":        i == (_mdblist_active_key_idx % len(keys)),
+            "cooling_down":  now < cd,
+            "cooldown_secs": max(0, round(cd - now)),
+        })
+
+    return {
+        "cache":   get_cache_stats(),
+        "runtime": {
+            "renders_in_flight":        len(_render_inflight),
+            "quality_fetches_in_flight": len(_quality_bg_inflight),
+            "rating_fetches_in_flight":  len(_rating_fetch_inflight),
+            "rating_backoff_titles":     len(_rating_backoff),
+            "mdblist_keys":              mdblist_keys,
+            "composite_cache_disabled":  _cfg.DISABLE_COMPOSITE_CACHE,
+            "svg_logo_support":          svg_logo_supported(),
+        },
+    }
+
+
 # TMDB genre name → id, used only by the debug canvas preview below.
 _DEBUG_GENRE_IDS = {
     "Action": 28, "Adventure": 12, "Animation": 16, "Comedy": 35, "Crime": 80,
@@ -1252,20 +1385,59 @@ _DEBUG_GENRE_IDS = {
 
 
 @app.get("/debug/canvas")
-async def debug_canvas(genre: str = "Action", title: str = "Sample Title"):
+async def debug_canvas(genre: str = "Action", title: str = "Sample Title", access_key: str = ""):
     """
     Preview a no-art fallback canvas for a given genre/title — renders the
     genre-tinted gradient, the genre-aware title font, and the genre mascot.
     Lets you eyeball each genre's cartoon without hunting for a poster-less id.
     """
+    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+        raise HTTPException(status_code=403, detail="Unauthorized")
     gid = _DEBUG_GENRE_IDS.get(genre)
-    canvas = _make_fallback_canvas([gid] if gid else None).convert("RGBA")
+    canvas = _load_genre_background(genre)
+    if canvas is None:
+        canvas = _make_fallback_canvas([gid] if gid else None).convert("RGBA")
     cfg = RequestConfig()
     img = build_poster(canvas, "—", genre, cfg, fallback_title=title, no_poster=True)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="JPEG", quality=90)
     return Response(content=buf.getvalue(), media_type="image/jpeg",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/debug/fallback-gallery", response_class=HTMLResponse)
+async def fallback_gallery(access_key: str = ""):
+    """
+    A self-contained gallery of every genre's no-art fallback card, so an
+    operator can review the mascots + genre fonts at a glance.  Each tile is a
+    live /debug/canvas render.  Gated behind the access key when configured.
+    """
+    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+        raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
+    _ak = f"&access_key={access_key}" if access_key else ""
+    tiles = "".join(
+        f'<figure><img loading="lazy" src="/debug/canvas?genre={g}'
+        f'&title={g.replace(" ", "+")}{_ak}" alt="{g}"><figcaption>{g}</figcaption></figure>'
+        for g in sorted(_DEBUG_GENRE_IDS)
+    )
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fallback art preview</title>
+<style>
+  body {{ margin:0; background:#0e0e10; color:#e8e8ea;
+         font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }}
+  header {{ padding:18px 20px; border-bottom:1px solid #2a2a2e; }}
+  h1 {{ font-size:18px; margin:0; }} p {{ color:#9a9aa0; margin:6px 0 0; font-size:13px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+           gap:16px; padding:20px; }}
+  figure {{ margin:0; }}
+  img {{ width:100%; border-radius:10px; display:block; background:#1a1a1d; }}
+  figcaption {{ text-align:center; padding-top:8px; font-size:13px; color:#c7c7cc; }}
+</style></head><body>
+<header><h1>Fallback art preview</h1>
+<p>Live render of every genre's no-art card — genre-tinted gradient, genre font, and mascot.</p></header>
+<div class="grid">{tiles}</div></body></html>"""
+    return HTMLResponse(content=html)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1409,6 +1581,7 @@ async def get_poster(
     textless: str | None = None,
     score_color_mode: str | None = None,
     debug: str | None = None,
+    nocache: str | None = None,
 ):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized, your access key is not valid for this instance.")
@@ -1441,10 +1614,19 @@ async def get_poster(
         k: v for k, v in request.query_params.items()
         if k not in (
             "tmdb_id", "imdb_id", "mdblist_key", "tmdb_key", "type",
-            "quality", "season", "episode", "access_key", "debug",
+            "quality", "season", "episode", "access_key", "debug", "nocache",
         )
     }
     rcfg = build_request_config(raw_params)
+
+    # Operator force-refresh: ?nocache=1 skips the composite cache READ so a fresh
+    # render is produced (and re-cached), letting an operator invalidate a single
+    # title without flushing the whole cache.  Only honoured when an ACCESS_KEY is
+    # configured (and therefore already validated above) so open instances can't
+    # be made to burn CPU on forced re-renders.
+    _force_refresh = bool(
+        nocache and nocache.strip().lower() in ("1", "true", "yes") and _cfg.ACCESS_KEY
+    )
 
     # ------------------------------------------------------------------
     # Final poster cache — keyed on imdb_id, type, and a short hash of
@@ -1452,11 +1634,24 @@ async def get_poster(
     # Skipped when an explicit quality= override is supplied (one-off).
     # ------------------------------------------------------------------
     if not quality and not _cfg.DISABLE_COMPOSITE_CACHE:
+        # Server-side detection settings affect the rendered output but aren't URL
+        # params, so fold a signature into the hash.  Toggling detection or
+        # changing its thresholds then auto-busts stale composites (and leaves
+        # cache keys unchanged when the feature is off — backward compatible).
+        if _cfg.TEXTLESS_TEXT_DETECTION:
+            from text_detect import DETECT_RES_SIG
+            _detect_sig = (
+                f"|td={_cfg.TEXTLESS_MIN_BOXES}:{_cfg.TEXTLESS_DETECTION_MAX_VOTES}:{DETECT_RES_SIG}"
+            )
+        else:
+            _detect_sig = ""
         _params_hash = hashlib.md5(
-            "&".join(f"{k}={v}" for k, v in sorted(raw_params.items())).encode()
+            ("&".join(f"{k}={v}" for k, v in sorted(raw_params.items())) + _detect_sig).encode()
         ).hexdigest()[:8]
         final_cache_key = f"{imdb_id}:{type}:{_params_hash}"
-        cached_jpeg = get_cached_final_poster(final_cache_key)
+        cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
+        if _force_refresh:
+            logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
         if cached_jpeg is not None:
             logger.info(f"Final poster cache hit for {final_cache_key}")
             etag = f'"{final_cache_key}"'
@@ -1464,10 +1659,9 @@ async def get_poster(
                 return Response(status_code=304)
             _hit_resp = Response(content=cached_jpeg, media_type="image/jpeg")
             _hit_resp.headers["ETag"] = etag
-            if _cfg.DISABLE_COMPOSITE_CACHE:
-                _hit_resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-                _hit_resp.headers["Pragma"] = "no-cache"
-            elif _cfg.CDN_CACHE_TTL > 0:
+            # This path is only reached when composite caching is enabled, so a
+            # no-store branch would be dead here — CDN TTL is the only option.
+            if _cfg.CDN_CACHE_TTL > 0:
                 _hit_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
             return _hit_resp
     else:
@@ -1487,10 +1681,9 @@ async def get_poster(
             try:
                 _coal_resp = Response(content=await _existing_fut, media_type="image/jpeg")
                 _coal_resp.headers["ETag"] = f'"{final_cache_key}"'
-                if _cfg.DISABLE_COMPOSITE_CACHE:
-                    _coal_resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-                    _coal_resp.headers["Pragma"] = "no-cache"
-                elif _cfg.CDN_CACHE_TTL > 0:
+                # Coalescing only happens when caching is on (final_cache_key set),
+                # so no-store can't apply here — CDN TTL only.
+                if _cfg.CDN_CACHE_TTL > 0:
                     _coal_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
                 return _coal_resp
             except Exception:
@@ -1737,15 +1930,57 @@ async def get_poster(
 
             rating_coro = _fetch_rating_gated()
 
-        # Quality is always fetched in the background (never inline); the 4th
-        # gather slot was removed after quality_needs_fetch was made always-False.
+        # Quality is normally fetched in the background (not in this gather).
+        # The one exception — wait_for_quality — is handled inline after the
+        # gather completes so it never blocks rating coalescing.
+        _backdrop_rescued = False
         is_no_poster = poster_path is None and not _use_backdrop
         if _use_backdrop:
-            _image_coro = fetch_backdrop_image(client, tmdb_id, backdrop_path)
+            # Option B: even null-language backdrops sometimes carry residual
+            # text — bias the crop away from it when detection is enabled.
+            _image_coro = fetch_backdrop_image(
+                client, tmdb_id, backdrop_path, avoid_text=_cfg.TEXTLESS_TEXT_DETECTION)
         elif is_no_poster:
-            _image_coro = _resolved(_make_fallback_canvas(genre_ids))
+            # Prefer the atmospheric genre background; fall back to the flat
+            # genre-tinted gradient if no background art exists for this genre.
+            _bg = _load_genre_background(_tmdb_genre)
+            _image_coro = _resolved(_bg if _bg is not None else _make_fallback_canvas(genre_ids))
         else:
-            _image_coro = fetch_poster_image(client, tmdb_id, type, poster_path)
+            # Option A: the title has only text-bearing art (no textless poster
+            # or backdrop).  Before settling for the busy official poster, try a
+            # text-aware crop of a text-bearing backdrop; if it comes out clean
+            # we get a nicer image plus our own logo.  Gated to low-vote titles.
+            _rescued = None
+            _tbp = tmdb_data.get("text_backdrop_path")
+            if (_cfg.TEXTLESS_TEXT_DETECTION and not is_textless and _tbp
+                    and _detection_vote_ok(tmdb_data.get("vote_count"))):
+                try:
+                    _cand = await fetch_backdrop_image(client, tmdb_id, _tbp, avoid_text=True)
+                    # Memoise per (candidate backdrop, min_boxes, scan resolution)
+                    # — same rationale as the suppress path: config-independent.
+                    from text_detect import DETECT_RES_SIG
+                    _resc_key = f"bd:{_tbp}:{_CROP_VERSION}|mb={_cfg.TEXTLESS_MIN_BOXES}:{DETECT_RES_SIG}"
+                    _still_text = get_cached_text_detection(_resc_key)
+                    if _still_text is None:
+                        from text_detect import poster_has_burned_in_text
+                        async with _get_detect_semaphore():
+                            _still_text = await asyncio.get_running_loop().run_in_executor(
+                                None,
+                                lambda: poster_has_burned_in_text(_cand, min_boxes=_cfg.TEXTLESS_MIN_BOXES))
+                        set_cached_text_detection(_resc_key, _still_text)
+                    if not _still_text:
+                        _rescued = _cand
+                        logger.info(f"Text-aware backdrop crop clean for {tmdb_id} — using it with logo")
+                    else:
+                        logger.info(f"Text-aware backdrop crop still has text for {tmdb_id} — keeping official poster")
+                except Exception as exc:
+                    logger.warning(f"Backdrop rescue failed for {tmdb_id}: {exc}")
+            if _rescued is not None:
+                is_textless = True            # we now have textless art → composite logo
+                _backdrop_rescued = True
+                _image_coro = _resolved(_rescued)
+            else:
+                _image_coro = fetch_poster_image(client, tmdb_id, type, poster_path)
 
         (
             image,
@@ -1754,7 +1989,7 @@ async def get_poster(
             trending_rank,
         ) = await asyncio.gather(
             _image_coro,
-            fetch_logo(client, logos, rcfg.logo_language, imdb_id=imdb_id, original_language=tmdb_data.get("original_language"), skip_native=not rcfg.logo_native_fallback) if (is_textless and not is_no_poster) else _resolved(None),
+            fetch_logo(client, logos, rcfg.logo_language, imdb_id=imdb_id, original_language=tmdb_data.get("original_language"), logo_priority=rcfg.logo_priority) if (is_textless and not is_no_poster) else _resolved(None),
             rating_coro,
             fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )
@@ -2019,11 +2254,59 @@ async def get_poster(
                 "rating_display_mode":rcfg.rating_display_mode,
             })
 
+        # ------------------------------------------------------------------
+        # Experimental burned-in-text detection (opt-in).  When a poster TMDB
+        # tagged "textless" actually has the title burned in, compositing our
+        # own logo/title would double it — so detect that and skip our overlay.
+        # Gated to low-vote titles (where mislabels concentrate); popular titles
+        # are trusted to avoid false positives.  Runs in the thread pool.
+        # ------------------------------------------------------------------
+        _suppress_overlay = False
+        if (_cfg.TEXTLESS_TEXT_DETECTION and is_textless and not is_no_poster
+                and not _backdrop_rescued):
+            _vc = tmdb_data.get("vote_count")
+            if _detection_vote_ok(_vc):
+                # The scanned image is the backdrop crop (when we fell back to it)
+                # or the TMDB poster — both identified by an immutable image path.
+                # Memoise the result per (asset, min_boxes): the EAST scan depends
+                # only on the image + threshold, never on the URL config, so this
+                # stops a ~200ms re-scan on every config change (composite miss).
+                # Backdrop crops depend on the crop-logic version, so key them
+                # by it; TMDB poster paths are content-addressed (immutable).
+                from text_detect import DETECT_RES_SIG
+                _det_src = (f"bd:{backdrop_path}:{_CROP_VERSION}" if _use_backdrop
+                            else f"ps:{poster_path}")
+                _det_key = f"{_det_src}|mb={_cfg.TEXTLESS_MIN_BOXES}:{DETECT_RES_SIG}"
+                _suppress_overlay = get_cached_text_detection(_det_key)
+                if _suppress_overlay is None:
+                    from text_detect import poster_has_burned_in_text
+                    async with _get_detect_semaphore():
+                        _suppress_overlay = await asyncio.get_running_loop().run_in_executor(
+                            None,
+                            lambda: poster_has_burned_in_text(image, min_boxes=_cfg.TEXTLESS_MIN_BOXES),
+                        )
+                    set_cached_text_detection(_det_key, _suppress_overlay)
+                if _suppress_overlay:
+                    logger.info(
+                        f"Burned-in text detected on 'textless' poster {tmdb_id} "
+                        f"(votes={_vc}) — skipping logo/title overlay"
+                    )
+            elif _vc is None:
+                logger.debug(
+                    f"Text detection skipped for {tmdb_id}: vote_count unknown "
+                    f"(stale metadata cache — refreshes on next TTL miss)"
+                )
+
         # Offload CPU-bound PIL compositing + JPEG encoding to the thread pool
         # so the event loop stays free for concurrent requests.
         _bp_args = dict(
-            logo=logo if (is_textless and not is_no_poster and not rcfg.textless) else None,
-            fallback_title=title if is_no_poster else (title if is_textless and not logo and not rcfg.textless else None),
+            logo=logo if (is_textless and not is_no_poster and not rcfg.textless
+                          and not _suppress_overlay) else None,
+            fallback_title=(
+                title if is_no_poster
+                else (title if is_textless and not logo and not rcfg.textless
+                      and not _suppress_overlay else None)
+            ),
             discovery_meta=discovery_meta,
             quality_tokens=quality_tokens,
             release_year=release_year,

@@ -35,7 +35,7 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 
 - **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference falls back through requested → content's original language → language-neutral → English → Metahub CDN. When no logo exists in the preferred language you can choose between showing the native-language logo or rendering the translated title as text. Optional Textless toggle skips the logo entirely for clients that render the title separately.
 
-- **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is centre-cropped to portrait; when no poster art exists at all, a genre-tinted gradient canvas is generated with the title text. 
+- **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is centre-cropped to portrait; when no poster art exists at all, an atmospheric genre background (a starfield for Sci-Fi, blood drips for Horror, a dusty sunset for Western, …) is used with the title text and a genre mascot. Backgrounds live in `static/genre_bg/` — regenerate them with `python genre_backgrounds.py`, or drop in your own 500×750 PNG per genre to override. Preview the full set in the configurator (Logo section → **Preview fallback art**) or at `/debug/fallback-gallery`. 
 
 - **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Per-section info modals, URL import (paste any /poster URL to hydrate every control), persistent settings via localStorage, and a mobile-optimised expanded preview.
 
@@ -128,6 +128,17 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
 | `DISABLE_COMPOSITE_CACHE` | - | Set to `true` to skip composite cache reads and writes entirely. Every request re-renders from scratch. For development only |
+| `LOGO_CONTRAST_RESCUE` | `true` | Recolour a flat logo (white/black/accent) when it blends into the poster background. Multi-colour/outline logos are never touched. Set `false` to always keep original colours |
+| `DEBUG_LOGO_SIZING` | `false` | Log per-logo sizing telemetry at INFO level. For tuning only |
+| `TEXTLESS_TEXT_DETECTION` | `true` | Detect burned-in title text on posters TMDB mislabelled as "textless" and skip our own logo so the title isn't doubled. Set `false` to opt out |
+| `TEXTLESS_DETECTION_MAX_VOTES` | `300` | Only run text detection on titles with at most this many TMDB votes (mislabels concentrate in the long tail; popular titles are trusted) |
+| `TEXTLESS_MIN_BOXES` | `128` | Min EAST text activations (at the 320×640 reference, auto-scaled to the active resolution) before a poster is treated as having burned-in text. Higher = stricter. Changing it auto-invalidates cached detection results + composites |
+| `TEXTLESS_DETECTION_CONCURRENCY` | `1` | Max text scans allowed into the worker pool at once. Keeps the pool free for compositing during a burst |
+| `EAST_INPUT_WIDTH` / `EAST_INPUT_HEIGHT` | `192` / `384` | EAST scan input resolution (each a multiple of 32). Smaller = faster; `min_boxes` auto-scales so its meaning is preserved |
+| `TEXTLESS_SCAN_TOP` | `0.08` | Fraction of poster height skipped from the top before counting text (covers top/middle/bottom titles; ignores top-edge logos) |
+| `BAKE_EAST_MODEL` | `true` | Build-time only. Bake the ~96MB EAST model into the image. Set `false` for a leaner image that downloads it once at runtime |
+
+> The ~96 MB EAST model is baked into the image by default. Set `BAKE_EAST_MODEL=false` (build arg / `.env`) for a leaner image that downloads it once into the cache volume on first use instead.
 | `DEFAULT_LOGO_LANGUAGE` | `en` | ISO 639-1 language code for title logos |
 
 ---
@@ -141,6 +152,15 @@ https://yourdomain.com/poster?tmdb_id={tmdb_id}&imdb_id={imdb_id}&type={type}
 ```
 
 Append `&debug=1` to any poster URL to receive a JSON response with all computed metadata — score, genre, sash label, quality tokens, award data, matched cast/directors — instead of rendering the image. Useful for diagnosing unexpected sashes or missing ratings.
+
+Append `&nocache=1` (requires `ACCESS_KEY` to be set and valid) to force a fresh render of a single title, bypassing the composite cache read and re-caching the result. Lets you refresh one poster without flushing the whole cache.
+
+### Operator endpoints
+
+These are gated behind `access_key` when one is configured:
+
+- `GET /stats` — cache row counts / sizes plus live runtime state (in-flight renders, background fetches, MDBList key cooldowns). Handy for spotting issues before they surface.
+- `GET /debug/fallback-gallery` — a gallery of every genre's no-art fallback card (mascot + genre font), also reachable via the **Preview fallback art** button in the configurator's Logo section.
 
 ---
 

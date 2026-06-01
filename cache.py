@@ -39,6 +39,20 @@ def init_db() -> None:
     os.makedirs(TMDB_POSTER_CACHE_DIR, exist_ok=True)
     os.makedirs(TMDB_LOGO_CACHE_DIR, exist_ok=True)
     _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+
+    # Enable incremental auto-vacuum so prune_caches' PRAGMA incremental_vacuum
+    # can actually return freed pages to the OS.  auto_vacuum can only be set
+    # before the first table is created; an existing DB would need a full
+    # (blocking) VACUUM to convert, which we deliberately avoid at startup.  So
+    # we only enable it on a brand-new database — fresh installs reclaim space,
+    # existing installs are unchanged (no regression; it was already a no-op
+    # there).  Must run before journal_mode/table creation writes any pages.
+    _is_new_db = _db_conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+    ).fetchone()[0] == 0
+    if _is_new_db:
+        _db_conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+
     _db_conn.execute("PRAGMA journal_mode=WAL")
     _db_conn.execute("PRAGMA synchronous=NORMAL")       # safe with WAL; avoids unnecessary fsyncs
     _db_conn.execute("PRAGMA cache_size=-32000")        # 32 MB in-process page cache
@@ -152,6 +166,20 @@ def init_db() -> None:
         )
     """)
 
+    # Burned-in-text detection results, keyed by source asset + detection params.
+    # The EAST scan (~200ms) depends only on the image bytes and min_boxes, never
+    # on the user's URL config — so memoising it here stops the most expensive
+    # feature from re-running on every config change (composite-cache miss).
+    # TMDB image paths are content-addressed (immutable), so results never go
+    # stale; cached_at exists only for housekeeping/pruning.
+    _db_conn.execute("""
+        CREATE TABLE IF NOT EXISTS text_detection_cache (
+            cache_key TEXT PRIMARY KEY,
+            has_text  INTEGER NOT NULL,
+            cached_at INTEGER NOT NULL
+        )
+    """)
+
     # Migrate existing tmdb_metadata_cache rows
     existing_meta_cols = {
         row[1]
@@ -166,6 +194,8 @@ def init_db() -> None:
         ("original_language",   "TEXT"),
         ("backdrop_path",       "TEXT"),
         ("tmdb_status",         "TEXT"),
+        ("vote_count",          "INTEGER"),
+        ("text_backdrop_path",  "TEXT"),
     ):
         if col not in existing_meta_cols:
             _db_conn.execute(
@@ -258,6 +288,44 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
         logger.error(f"Final poster cache write error: {exc}")
 
 
+def get_cache_stats() -> dict:
+    """
+    Return row counts for every cache table plus the composite cache's total
+    byte size and the DB file size on disk.  Used by the /stats endpoint so
+    operators can see cache health at a glance.  Never raises.
+    """
+    stats: dict = {}
+    try:
+        db = get_db()
+        for table in (
+            "rating_cache", "quality_cache", "trending_cache",
+            "tmdb_metadata_cache", "final_poster_cache",
+            "digital_release_cache", "release_status_cache",
+            "text_detection_cache",
+        ):
+            try:
+                (n,) = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                stats[table] = n
+            except Exception:
+                stats[table] = None
+
+        try:
+            (total,) = db.execute(
+                "SELECT COALESCE(SUM(LENGTH(jpeg_bytes)), 0) FROM final_poster_cache"
+            ).fetchone()
+            stats["composite_bytes"] = int(total)
+        except Exception:
+            stats["composite_bytes"] = None
+
+        try:
+            stats["db_file_bytes"] = os.path.getsize(DB_PATH)
+        except OSError:
+            stats["db_file_bytes"] = None
+    except Exception as exc:
+        logger.error(f"Cache stats error: {exc}")
+    return stats
+
+
 def prune_caches() -> None:
     """
     Delete expired rows from every SQLite cache table.
@@ -325,7 +393,8 @@ def prune_caches() -> None:
             db.commit()
 
         # Reclaim free pages left by the deletes.  INCREMENTAL vacuum moves a
-        # few pages per call without locking the DB for a long time.
+        # few pages per call without locking the DB for long.  No-op on DBs
+        # created before auto_vacuum=INCREMENTAL was enabled (see init_db).
         with _db_lock:
             get_db().execute("PRAGMA incremental_vacuum(100)")
             get_db().commit()
@@ -676,7 +745,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    logos_json, cached_at,
                    credits_json, production_cos_json,
                    runtime, number_of_seasons, number_of_episodes,
-                   original_language, backdrop_path, tmdb_status
+                   original_language, backdrop_path, tmdb_status, vote_count,
+                   text_backdrop_path
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -690,7 +760,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             logos_json, cached_at,
             credits_json, production_cos_json,
             runtime, number_of_seasons, number_of_episodes,
-            original_language, backdrop_path, tmdb_status,
+            original_language, backdrop_path, tmdb_status, vote_count,
+            text_backdrop_path,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -718,6 +789,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "original_language":    original_language,
             "backdrop_path":        backdrop_path,
             "tmdb_status":          tmdb_status,
+            "vote_count":           vote_count,
+            "text_backdrop_path":   text_backdrop_path,
         }
     except Exception as exc:
         logger.error(f"TMDB metadata cache read error: {exc}")
@@ -741,6 +814,8 @@ def set_cached_tmdb_metadata(
     number_of_episodes: int | None = None,
     backdrop_path: str | None = None,
     tmdb_status: str | None = None,
+    vote_count: int | None = None,
+    text_backdrop_path: str | None = None,
 ) -> None:
     try:
         with _db_lock:
@@ -751,8 +826,9 @@ def set_cached_tmdb_metadata(
                      poster_path, logos_json, cached_at,
                      credits_json, production_cos_json,
                      runtime, number_of_seasons, number_of_episodes,
-                     original_language, backdrop_path, tmdb_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     original_language, backdrop_path, tmdb_status, vote_count,
+                     text_backdrop_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -771,6 +847,8 @@ def set_cached_tmdb_metadata(
                     original_language,
                     backdrop_path,
                     tmdb_status,
+                    vote_count,
+                    text_backdrop_path,
                 ),
             )
             get_db().commit()
@@ -805,18 +883,6 @@ def is_digital_release(imdb_id: str) -> bool:
     except Exception as exc:
         logger.error(f"Digital release cache lookup error: {exc}")
         return False
-
-
-def count_digital_releases() -> int:
-    """Return the total number of entries in the digital release cache."""
-    try:
-        (count,) = get_db().execute(
-            "SELECT COUNT(*) FROM digital_release_cache"
-        ).fetchone()
-        return count
-    except Exception as exc:
-        logger.error(f"Digital release cache count error: {exc}")
-        return 0
 
 
 def add_digital_releases(entries: list[tuple[str, int]]) -> int:
@@ -854,11 +920,10 @@ _RELEASE_STATUS_TTL_DAYS = 7
 def get_cached_release_status(cache_key: str) -> str | None:
     """Return the cached release status string, or None if absent / expired."""
     try:
-        with _db_lock:
-            row = get_db().execute(
-                "SELECT status, cached_at FROM release_status_cache WHERE cache_key = ?",
-                (cache_key,),
-            ).fetchone()
+        row = get_db().execute(
+            "SELECT status, cached_at FROM release_status_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
         if not row:
             return None
         status, cached_at = row
@@ -887,3 +952,37 @@ def set_cached_release_status(cache_key: str, status: str) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Release status cache write error: {exc}")
+
+
+def get_cached_text_detection(cache_key: str) -> bool | None:
+    """Return the cached burned-in-text result (True/False), or None if absent.
+
+    Results never expire — they're keyed by an immutable TMDB image path plus the
+    detection params, so the answer can't change for a given key.
+    """
+    try:
+        row = get_db().execute(
+            "SELECT has_text FROM text_detection_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        return None if row is None else bool(row[0])
+    except Exception as exc:
+        logger.error(f"Text-detection cache read error: {exc}")
+        return None
+
+
+def set_cached_text_detection(cache_key: str, has_text: bool) -> None:
+    """Upsert a burned-in-text detection result."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                """
+                INSERT INTO text_detection_cache (cache_key, has_text, cached_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET has_text=excluded.has_text, cached_at=excluded.cached_at
+                """,
+                (cache_key, int(has_text), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Text-detection cache write error: {exc}")

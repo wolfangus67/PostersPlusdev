@@ -1214,26 +1214,6 @@ def parse_mdblist_awards(
 # Sash drawing  (unchanged from original)
 # ---------------------------------------------------------------------------
 
-def _load_font_fit(fonts_dir: str, font_name: str, font_size: int,
-                   label: str, max_w: int) -> ImageFont.ImageFont:
-    """Load font at font_size, then scale down if label exceeds max_w pixels."""
-    path = os.path.join(fonts_dir, font_name)
-    try:
-        font = ImageFont.truetype(path, font_size)
-    except IOError:
-        return ImageFont.load_default()
-    _tmp = ImageDraw.Draw(Image.new("L", (1, 1)))
-    bbox = _tmp.textbbox((0, 0), label, font=font)
-    text_w = bbox[2] - bbox[0]
-    if text_w > max_w:
-        font_size = max(8, int(font_size * max_w / text_w))
-        try:
-            font = ImageFont.truetype(path, font_size)
-        except IOError:
-            pass
-    return font
-
-
 def _text_center(
     draw: ImageDraw.ImageDraw,
     text: str,

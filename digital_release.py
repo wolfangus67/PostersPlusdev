@@ -87,7 +87,14 @@ async def sync_digital_releases(client: httpx.AsyncClient) -> int:
                 # store with posted_at=0 (which would be pruned next sweep anyway).
                 continue
             posted_at = int(created_utc)
-            for imdb_id in _IMDB_RE.findall(post.get("selftext", "")):
+            # Scan body, title AND url — posters sometimes put the IMDB link in
+            # the title or as the submission URL rather than the self-text body.
+            haystack = " ".join((
+                post.get("selftext", "") or "",
+                post.get("title", "") or "",
+                post.get("url", "") or "",
+            ))
+            for imdb_id in set(_IMDB_RE.findall(haystack)):
                 entries.append((imdb_id, posted_at))
 
         if len(posts) < _LIMIT:

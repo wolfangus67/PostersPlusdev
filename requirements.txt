@@ -8,3 +8,9 @@ Pillow>=10.0,<12
 httpx>=0.25,<1.0
 numpy>=1.26,<3
 pycairo>=1.25,<2
+# Rasterises SVG title logos (TMDB serves many of its highest-voted logos as SVG).
+# Pulls cairocffi/tinycss2/cssselect2; cairo runtime lib is already in the image.
+cairosvg>=2.7,<3
+# Classic-CV burned-in-text detection for mislabelled "textless" posters.
+# headless variant avoids GUI/X11 deps. Only loaded when TEXTLESS_TEXT_DETECTION=true.
+opencv-python-headless>=4.8,<5

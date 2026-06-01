@@ -10,6 +10,31 @@ import numpy as np
 logger = logging.getLogger(__name__)
 from PIL import Image, ImageDraw, ImageFilter
 
+# SVG title-logo support — TMDB serves many of its highest-voted logos as SVG.
+# Soft import so the service still runs (PNG-only) if cairosvg is unavailable.
+try:
+    import cairosvg as _cairosvg
+    _HAS_CAIROSVG = True
+except Exception:
+    _HAS_CAIROSVG = False
+
+
+def svg_logo_supported() -> bool:
+    """True when SVG title logos can be rasterised (cairosvg is importable)."""
+    return _HAS_CAIROSVG
+
+
+def _rasterize_svg(svg_bytes: bytes, target_w: int = 1000) -> "Image.Image | None":
+    """Render SVG bytes to an RGBA PIL image at target_w px wide, or None on failure."""
+    if not _HAS_CAIROSVG:
+        return None
+    try:
+        png_bytes = _cairosvg.svg2png(bytestring=svg_bytes, output_width=target_w)
+        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    except Exception as exc:
+        logger.warning(f"SVG logo rasterise failed: {exc}")
+        return None
+
 from cache import (
     get_cached_trending_snapshot,
     set_cached_trending_snapshot,
@@ -29,6 +54,8 @@ from config import (
     LOGO_MAX_W_RATIO,
     LOGO_MAX_H_RATIO,
     LOGO_BOTTOM_RATIO,
+    LOGO_CONTRAST_RESCUE,
+    DEBUG_LOGO_SIZING,
 )
 
 
@@ -229,6 +256,8 @@ async def fetch_poster_metadata(
             "number_of_seasons":     meta.get("number_of_seasons"),
             "number_of_episodes":    meta.get("number_of_episodes"),
             "tmdb_status":           meta.get("tmdb_status"),
+            "vote_count":            meta.get("vote_count"),
+            "text_backdrop_path":    meta.get("text_backdrop_path"),
         }
         return (
             meta["genre_ids"],
@@ -307,6 +336,16 @@ async def fetch_poster_metadata(
     else:
         backdrop_path = None
 
+    # Best TEXT-bearing (language-tagged) backdrop — the last-resort landscape
+    # source for titles with no textless poster or backdrop.  Only used by the
+    # text-aware crop rescue (gated behind TEXTLESS_TEXT_DETECTION) which crops
+    # away the title text; never used by the default pipeline.
+    _text_backdrops = [b for b in backdrops if b.get("iso_639_1") not in (None, "")]
+    text_backdrop_path: str | None = (
+        max(_text_backdrops, key=lambda x: x.get("vote_average", 0))["file_path"]
+        if _text_backdrops else None
+    )
+
     genre_ids            = [g["id"] for g in data.get("genres", [])]
     credits              = data.get("credits", {})
     production_companies = data.get("production_companies", [])
@@ -315,6 +354,7 @@ async def fetch_poster_metadata(
     number_of_seasons    = data.get("number_of_seasons")
     number_of_episodes   = data.get("number_of_episodes")
     tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
+    vote_count           = data.get("vote_count")
 
     # If the content's original language wasn't included in the initial image
     # request (e.g. a Romanian show fetched by an English-language user), TMDB
@@ -363,6 +403,8 @@ async def fetch_poster_metadata(
         number_of_episodes=number_of_episodes,
         backdrop_path=backdrop_path,
         tmdb_status=tmdb_status,
+        vote_count=vote_count,
+        text_backdrop_path=text_backdrop_path,
     )
 
     tmdb_data = {
@@ -373,6 +415,8 @@ async def fetch_poster_metadata(
         "number_of_seasons":    number_of_seasons,
         "number_of_episodes":   number_of_episodes,
         "tmdb_status":          tmdb_status,
+        "vote_count":           vote_count,
+        "text_backdrop_path":   text_backdrop_path,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data
@@ -419,7 +463,52 @@ async def fetch_poster_image(
     return image
 
 
-def _saliency_crop_left(image: Image.Image, crop_w: int) -> int:
+# Bumped whenever the backdrop crop logic changes, so cached crops from the old
+# algorithm are invalidated rather than served.
+#   v2 = face-aware cropping
+#   v3 = focus a single face when subjects are too far apart to both fit
+_CROP_VERSION = "v3"
+
+
+def _face_crop_left(image: Image.Image, crop_w: int) -> "int | None":
+    """
+    Best left-edge x for a portrait crop that keeps detected faces in frame, or
+    None when no faces are found / detection is unavailable (caller then falls
+    back to the saliency crop).
+
+    If every face fits within the crop window, the window is centred on their
+    combined bounding box so all stay framed.  If the faces are too far apart to
+    fit, the crop focuses on the single most prominent face (largest × most
+    confident) rather than splitting the difference and slicing each in half.
+    """
+    try:
+        from face_detect import detect_faces
+    except Exception:
+        return None
+    faces = detect_faces(image)
+    if not faces:
+        return None
+    w = image.width
+    if crop_w >= w:
+        return 0
+
+    lefts  = [cx - fw / 2.0 for cx, fw, _ in faces]
+    rights = [cx + fw / 2.0 for cx, fw, _ in faces]
+    extent = max(rights) - min(lefts)
+
+    if extent <= crop_w:
+        # All faces fit — centre on their bounding-box midpoint.
+        target_cx = (min(lefts) + max(rights)) / 2.0
+    else:
+        # Too far apart to keep both — focus on the most prominent face.
+        target_cx = max(faces, key=lambda f: f[2])[0]
+
+    left = int(round(target_cx - crop_w / 2))
+    return max(0, min(w - crop_w, left))
+
+
+def _saliency_crop_left(image: Image.Image, crop_w: int,
+                        text_penalty=None, text_weight: float = 1.8) -> int:
     """
     Find the best left-edge x-coordinate for a portrait crop of a landscape image.
 
@@ -510,6 +599,19 @@ def _saliency_crop_left(image: Image.Image, crop_w: int) -> int:
 
     col_sal = saliency.sum(axis=0)   # shape (sw,)
 
+    # --- Text avoidance ------------------------------------------------------
+    # Subtract a penalty proportional to per-column text density so the chosen
+    # crop window dodges burned-in title text.  text_penalty is a left→right
+    # profile (any length) in [0,1]; we resample it to the thumbnail width.
+    if text_penalty is not None and len(text_penalty) > 1 and col_sal.max() > 0:
+        prof = np.asarray(text_penalty, dtype=np.float32)
+        prof_resized = np.interp(
+            np.linspace(0.0, 1.0, sw, dtype=np.float32),
+            np.linspace(0.0, 1.0, len(prof), dtype=np.float32),
+            prof,
+        )
+        col_sal = col_sal - prof_resized * col_sal.max() * text_weight
+
     # --- Sliding-window via cumulative sum -----------------------------------
     cum         = np.concatenate([[0.0], col_sal.cumsum()])
     n_positions = sw - scrop_w + 1
@@ -538,6 +640,7 @@ async def fetch_backdrop_image(
     client: httpx.AsyncClient,
     tmdb_id: str,
     backdrop_path: str,
+    avoid_text: bool = False,
 ) -> Image.Image:
     """
     Fetch, saliency-crop, and cache a TMDB backdrop as a portrait poster.
@@ -546,9 +649,18 @@ async def fetch_backdrop_image(
     whose horizontal position is chosen by gradient-magnitude saliency rather
     than always defaulting to the centre.  This keeps the main subject in frame
     when cinematographers frame wide shots off-centre.
-    Cached under the same JPEG scheme as regular posters.
+
+    When *avoid_text* is set (text-detection feature on), an EAST per-column text
+    profile biases the crop away from burned-in title text.  Cached under the
+    same JPEG scheme as regular posters (text-aware crops keyed separately).
     """
-    cache_key = f"backdrop_{tmdb_id}_{backdrop_path.strip('/')}"
+    # Cache key carries a crop-logic version so changing the crop algorithm
+    # (e.g. adding face-aware cropping) invalidates previously-cached crops
+    # instead of serving the old framing.  Bump _CROP_VERSION on any crop change.
+    cache_key = (
+        f"backdrop_{tmdb_id}_{backdrop_path.strip('/')}_{_CROP_VERSION}"
+        + ("_ta" if avoid_text else "")
+    )
     cached_bytes = get_cached_tmdb_poster(cache_key)
 
     if cached_bytes:
@@ -564,24 +676,55 @@ async def fetch_backdrop_image(
     img_resp.raise_for_status()
     image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
 
-    # Saliency-aware crop: keep full height, cut the most active 2:3 strip.
-    w, h   = image.size
-    crop_w = int(h * 2 / 3)
-    if crop_w < w:
-        left = _saliency_crop_left(image, crop_w)
-        logger.info(
-            f"Backdrop saliency crop for {tmdb_id}: "
-            f"left={left} (centre would be {(w - crop_w) // 2}) of w={w}"
-        )
-        image = image.crop((left, 0, left + crop_w, h))
-
-    image = normalise_poster(image)
+    # The crop runs face/text OpenCV inference (CPU + a serialising lock), so do
+    # it in the thread pool — never inline on the event loop, or it would stall
+    # request handling while waiting on the shared inference lock.
+    image = await asyncio.get_running_loop().run_in_executor(
+        None, _crop_and_normalise_backdrop, image, tmdb_id, avoid_text
+    )
 
     buf = io.BytesIO()
     image.convert("RGB").save(buf, format="JPEG", quality=92)
     set_cached_tmdb_poster(cache_key, buf.getvalue())
 
     return image
+
+
+def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
+                                 avoid_text: bool) -> Image.Image:
+    """Synchronous backdrop crop (face-aware → saliency fallback) + normalise.
+    Runs in the thread pool; all OpenCV inference is confined here."""
+    # Optional text-density profile to steer the crop away from title text.
+    _text_prof = None
+    if avoid_text:
+        try:
+            from text_detect import text_column_profile
+            _text_prof = text_column_profile(image)
+        except Exception as exc:
+            logger.warning(f"Backdrop text profile failed for {tmdb_id}: {exc}")
+
+    # Crop full-height to a 2:3 strip.  Prefer a face-aware crop (robust on
+    # people shots where warm/textured backgrounds fool the saliency heuristic);
+    # fall back to saliency when no faces are detected.
+    w, h   = image.size
+    crop_w = int(h * 2 / 3)
+    if crop_w < w:
+        left = _face_crop_left(image, crop_w)
+        if left is not None:
+            logger.info(
+                f"Backdrop face-aware crop for {tmdb_id}: "
+                f"left={left} (centre would be {(w - crop_w) // 2}) of w={w}"
+            )
+        else:
+            left = _saliency_crop_left(image, crop_w, text_penalty=_text_prof)
+            logger.info(
+                f"Backdrop saliency crop for {tmdb_id}: "
+                f"left={left} (centre would be {(w - crop_w) // 2}) of w={w}"
+                f"{' [text-aware]' if _text_prof is not None else ''}"
+            )
+        image = image.crop((left, 0, left + crop_w, h))
+
+    return normalise_poster(image)
 
 
 async def _fetch_metahub_logo(
@@ -650,43 +793,59 @@ async def fetch_logo(
     logo_language: str = "en",
     imdb_id: str | None = None,
     original_language: str | None = None,
-    skip_native: bool = False,
+    logo_priority: str = "native_original",
 ) -> Image.Image | None:
     """
     Fetch the best available logo for a title, with a Metahub CDN fallback.
 
-    Resolution order:
-      1. TMDB logo in the requested language (logo_language).
-      2. TMDB logo in the content's original language (original_language) —
-         helps foreign titles that only have a native-language logo on TMDB.
-         Skipped when skip_native=True (caller prefers a text-title fallback).
-      3. TMDB language-neutral logo (iso_639_1 is null/"").
-      4. TMDB English logo.
-      5. Metahub CDN logo (images.metahub.space) — requires imdb_id.
-      6. None — no logo available; the caller may render the translated title
-         as text instead.
+    Two language-specific buckets are weighed first, in an order set by
+    *logo_priority*:
+      • "native"   — a logo in the requested language (logo_language).
+      • "original" — a logo in the content's own original language
+                     (original_language); helps foreign titles that only ship
+                     a native-language logo on TMDB.
+      logo_priority:
+        "native_original" (default) → native, then original
+        "original_native"           → original, then native
+        "native_text"               → native only (skip the original-language
+                                       bucket so the caller's text-title fallback
+                                       renders the translated title instead)
+
+    After those, the common fallbacks apply regardless of priority:
+      → TMDB language-neutral logo (iso_639_1 null/"")
+      → TMDB English logo
+      → Metahub CDN logo (images.metahub.space) — requires imdb_id
+      → None (caller may render the translated title as text instead).
 
     All results are cached locally so repeat requests never hit external APIs.
     """
-    _png = [lg for lg in logos if lg["file_path"].endswith(".png")]
+    # Accept PNG always; accept SVG too when we can rasterise it (cairosvg).
+    # TMDB's highest-voted logo is frequently an SVG, so excluding them would
+    # silently fall back to a lower-quality raster or a text title.
+    _exts = (".png", ".svg") if _HAS_CAIROSVG else (".png",)
+    _cand = [lg for lg in logos if lg["file_path"].lower().endswith(_exts)]
 
-    preferred = [lg for lg in _png if lg.get("iso_639_1") == logo_language]
-    # Native: original-language logos, skipped when it duplicates preferred
-    # (same bucket), when original_language wasn't provided, or when the caller
-    # has opted for a text-title fallback over a native-language logo.
-    native    = (
-        [lg for lg in _png if lg.get("iso_639_1") == original_language]
-        if (original_language and original_language != logo_language and not skip_native)
+    preferred = [lg for lg in _cand if lg.get("iso_639_1") == logo_language]
+    # Original-language logos.  Empty when original_language wasn't provided,
+    # when it duplicates the requested-language bucket, or when the caller opted
+    # for "native_text" (prefer a text-title fallback over an original-lang logo).
+    original  = (
+        [lg for lg in _cand if lg.get("iso_639_1") == original_language]
+        if (original_language and original_language != logo_language
+            and logo_priority != "native_text")
         else []
     )
-    neutral   = [lg for lg in _png if lg.get("iso_639_1") in (None, "")]
-    english   = [lg for lg in _png if lg.get("iso_639_1") == "en"]
+    neutral   = [lg for lg in _cand if lg.get("iso_639_1") in (None, "")]
+    english   = [lg for lg in _cand if lg.get("iso_639_1") == "en"]
 
-    # Resolution order: requested language → content's original language →
-    # language-neutral → English → Metahub CDN → None.
+    # Order the two language buckets per logo_priority, then the common
+    # fallbacks: language-neutral → English → (Metahub) → None.
     # Note: when logo_language == "en", preferred and english are the same bucket;
     # the "or" short-circuits so english is never tried twice.
-    candidates = preferred or native or neutral or english
+    if logo_priority == "original_native":
+        candidates = original or preferred or neutral or english
+    else:  # "native_original" and "native_text" both lead with the native bucket
+        candidates = preferred or original or neutral or english
 
     candidates = sorted(
         candidates,
@@ -701,6 +860,7 @@ async def fetch_logo(
         return None
 
     logo_path = candidates[0]["file_path"]
+    is_svg    = logo_path.lower().endswith(".svg")
 
     logo_cache_key = logo_path.strip('/').replace('/', '_')
     cached_bytes = get_cached_tmdb_logo(logo_cache_key)
@@ -710,11 +870,21 @@ async def fetch_logo(
         logo = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
         return logo
 
-    resp = await client.get(f"https://image.tmdb.org/t/p/w500{logo_path}")
+    # SVGs are served at "original" (the sized w500 path doesn't apply to vector);
+    # rasters use w500 which is plenty for our ≤~440px rendered width.
+    _size = "original" if is_svg else "w500"
+    resp = await client.get(f"https://image.tmdb.org/t/p/{_size}{logo_path}")
     logger.info(f"External API Call: Requested logo from TMDB")
     resp.raise_for_status()
 
-    logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    if is_svg:
+        logo = _rasterize_svg(resp.content)
+        if logo is None:
+            # Rasterise failed — fall back to Metahub, then None.
+            logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
+            return await _fetch_metahub_logo(client, imdb_id) if imdb_id else None
+    else:
+        logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
 
     bbox = logo.getchannel("A").getbbox()
     if bbox:
@@ -962,11 +1132,12 @@ def composite_logo(
     elif new_w < eff_max_w:
         new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
 
-    # TEMP debug — logo sizing telemetry for tuning the pixel ceiling.
-    logger.info(
-        f"LOGO SIZE: src={lw}x{lh} aspect={aspect:.2f} orient={orient:+.2f} "
-        f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
-    )
+    # Logo sizing telemetry — gated behind DEBUG_LOGO_SIZING (off by default).
+    if DEBUG_LOGO_SIZING:
+        logger.info(
+            f"LOGO SIZE: src={lw}x{lh} aspect={aspect:.2f} orient={orient:+.2f} "
+            f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
+        )
 
     logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.LANCZOS)
 
@@ -1003,7 +1174,7 @@ def composite_logo(
         # colour distance is small enough to be confident it's truly unreadable,
         # so well-contrasted logos are never touched.
         recoloured = False
-        if LOGO_CONTRAST_MIN > 0:
+        if LOGO_CONTRAST_RESCUE and LOGO_CONTRAST_MIN > 0:
             stats = _logo_color_stats(logo)
             if stats is not None:
                 logo_rgb, variance = stats
