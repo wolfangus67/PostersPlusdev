@@ -639,7 +639,7 @@ _BOTTOM_GRADIENT_LEVELS: dict[str, tuple[float, int] | None] = {
 # curve shape (1.0 = linear; >1 starts darker at the bottom and fades faster
 # at the top).  Decoupled from strength so retuning one doesn't affect the
 # other.
-_BOTTOM_GRADIENT_CURVE = 1.2
+_BOTTOM_GRADIENT_CURVE = 1.5
 
 # Genre-specific tint multipliers (R, G, B) for the fallback canvas.
 # Applied to a dark base luminance of 10–18, so the dominant channel peaks

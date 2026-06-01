@@ -134,9 +134,9 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `DEBUG_LOGO_SIZING` | `false` | Log per-logo sizing telemetry at INFO level. For tuning only |
 | `TEXTLESS_TEXT_DETECTION` | `true` | Detect burned-in title text on posters TMDB mislabelled as "textless" and skip our own logo so the title isn't doubled. Set `false` to opt out |
 | `TEXTLESS_DETECTION_MAX_VOTES` | `300` | Only run text detection on titles with at most this many TMDB votes (mislabels concentrate in the long tail; popular titles are trusted) |
-| `TEXTLESS_MIN_BOXES` | `128` | Min EAST text activations (at the 320×640 reference, auto-scaled to the active resolution) before a poster is treated as having burned-in text. Higher = stricter. Changing it auto-invalidates cached detection results + composites |
+| `TEXTLESS_MIN_BOXES` | `110` | Min EAST text activations (at the 320×640 reference, auto-scaled to the active resolution) before a poster is treated as having burned-in text. Higher = stricter. Changing it auto-invalidates cached detection results + composites |
 | `TEXTLESS_DETECTION_CONCURRENCY` | `1` | Max text scans allowed into the worker pool at once. Keeps the pool free for compositing during a burst |
-| `EAST_INPUT_WIDTH` / `EAST_INPUT_HEIGHT` | `192` / `384` | EAST scan input resolution (each a multiple of 32). Smaller = faster; `min_boxes` auto-scales so its meaning is preserved |
+| `EAST_INPUT_WIDTH` / `EAST_INPUT_HEIGHT` | `256` / `512` | EAST scan input resolution (each a multiple of 32). Smaller = faster (192×384 ≈ 2.7× but misses thin serif titles); `min_boxes` auto-scales so its meaning is preserved |
 | `TEXTLESS_SCAN_TOP` | `0.08` | Fraction of poster height skipped from the top before counting text (covers top/middle/bottom titles; ignores top-edge logos) |
 | `BAKE_EAST_MODEL` | `true` | Build-time only. Bake the ~96MB EAST model into the image. Set `false` for a leaner image that downloads it once at runtime |
 

@@ -172,11 +172,12 @@ TEXTLESS_TEXT_DETECTION    = _parse_bool_env("TEXTLESS_TEXT_DETECTION", True)
 TEXTLESS_DETECTION_MAX_VOTES = int(os.environ.get("TEXTLESS_DETECTION_MAX_VOTES", "300"))
 # Minimum EAST text-cell activations (at the 320x640 reference, auto-scaled to
 # the active EAST resolution) before a poster is treated as having burned-in
-# text.  Higher = stricter (fewer false positives, lower recall).  Default 128 is
-# a deliberately conservative balance: it ignores a small amount of incidental
-# text (signage, vehicle lettering) without missing real burned-in titles too
-# often.  Lower toward 48 to catch more marginal text; raise to over-trigger less.
-TEXTLESS_MIN_BOXES         = int(os.environ.get("TEXTLESS_MIN_BOXES", "128"))
+# text.  Higher = stricter (fewer false positives, lower recall).  Default 110
+# balances catching short titles (e.g. "SEOBOK", ~6 letters) against ignoring
+# incidental text (signage, vehicle lettering) — a corpus check showed incidental
+# text tops out well below this while real titles clear it.  Raise toward 128+ to
+# over-trigger less; lower toward 48 to catch more marginal text.
+TEXTLESS_MIN_BOXES         = int(os.environ.get("TEXTLESS_MIN_BOXES", "110"))
 # Max burned-in-text scans allowed into the thread pool at once.  Each scan is
 # already serialised internally, so the default of 1 fully serialises detection
 # while leaving the rest of the worker pool free for compositing/encode during a

@@ -50,10 +50,11 @@ _EAST_LAYERS = ["feature_fusion/Conv_7/Sigmoid", "feature_fusion/concat_3"]
 
 # EAST input resolution (each dim must be a multiple of 32).  Inference cost
 # scales ~linearly with pixel count, so a smaller input is a direct speed lever.
-# Default 192x384 runs ~2.7x faster than the 320x640 reference at ~98% decision
-# agreement on a real poster sample.  Raise toward 256x512 (~1.5x, ~99.3%) for
-# more fidelity, or 320x640 to match the reference exactly.  min_boxes is
-# expressed at the 320x640 reference and auto-scaled to the actual score-map
+# Default 256x512 runs ~1.5x faster than the 320x640 reference at ~99.3% decision
+# agreement on a real poster sample, and (unlike 192x384) resolves thin, widely
+# letter-spaced serif titles.  Drop to 192x384 for ~2.7x speed if detection cost
+# becomes a problem, or raise to 320x640 to match the reference exactly.  min_boxes
+# is expressed at the 320x640 reference and auto-scaled to the actual score-map
 # below, so the configured threshold keeps its meaning at any size.
 def _mult32(v: int, default: int) -> int:
     try:
@@ -62,8 +63,8 @@ def _mult32(v: int, default: int) -> int:
         return default
     return max(32, (v // 32) * 32)
 
-_EAST_W = _mult32(os.environ.get("EAST_INPUT_WIDTH"),  192)
-_EAST_H = _mult32(os.environ.get("EAST_INPUT_HEIGHT"), 384)
+_EAST_W = _mult32(os.environ.get("EAST_INPUT_WIDTH"),  256)
+_EAST_H = _mult32(os.environ.get("EAST_INPUT_HEIGHT"), 512)
 _EAST_REF_CELLS = (640 // 4) * (320 // 4)   # 12800 cells at the 320x640 reference
 
 # Fraction of poster height to skip from the TOP before counting text activations.

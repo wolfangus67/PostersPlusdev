@@ -26,41 +26,59 @@ from config import (
     DIGITAL_RELEASE_MAX_AGE_DAYS,
 )
 
-_db_conn: sqlite3.Connection | None = None
-_db_lock = threading.Lock()   # used only for writes; WAL allows concurrent reads
+# One SQLite connection PER THREAD (thread-local).  A single shared connection
+# serialises every statement — reads included — on its internal mutex, so under
+# load reads queue behind one another and behind writes.  Per-thread connections
+# let WAL's concurrent readers actually run in parallel; writes are still
+# serialised within this process by _db_lock, and across worker processes by
+# SQLite plus the busy timeout below.
+_local = threading.local()
+_db_lock = threading.Lock()     # serialises writes within this process
+_initialised = False
+
+
+def _apply_conn_pragmas(conn: sqlite3.Connection) -> None:
+    """Connection-level PRAGMAs, applied to every connection.  (journal_mode=WAL
+    and auto_vacuum are DB-level and persist in the file, so they're set once in
+    init_db.)"""
+    conn.execute("PRAGMA synchronous=NORMAL")       # safe with WAL; avoids unnecessary fsyncs
+    conn.execute("PRAGMA cache_size=-32000")        # 32 MB in-process page cache
+    conn.execute("PRAGMA temp_store=MEMORY")        # temp tables/indices stay in RAM
+    conn.execute("PRAGMA busy_timeout=15000")       # wait up to 15s if another worker holds the write lock
+    conn.execute("PRAGMA wal_autocheckpoint=1000")  # fold WAL back into main DB at 1000 pages (~4 MB)
+
 
 def get_db() -> sqlite3.Connection:
-    if _db_conn is None:
+    if not _initialised:
         raise RuntimeError("Database not initialized")
-    return _db_conn
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _apply_conn_pragmas(conn)
+        _local.conn = conn
+    return conn
 
 def init_db() -> None:
-    global _db_conn
+    global _initialised
     os.makedirs(TMDB_POSTER_CACHE_DIR, exist_ok=True)
     os.makedirs(TMDB_LOGO_CACHE_DIR, exist_ok=True)
-    _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    _initialised = True
+    conn = get_db()   # this thread's connection, with the per-connection PRAGMAs
 
     # Enable incremental auto-vacuum so prune_caches' PRAGMA incremental_vacuum
     # can actually return freed pages to the OS.  auto_vacuum can only be set
-    # before the first table is created; an existing DB would need a full
-    # (blocking) VACUUM to convert, which we deliberately avoid at startup.  So
-    # we only enable it on a brand-new database — fresh installs reclaim space,
-    # existing installs are unchanged (no regression; it was already a no-op
-    # there).  Must run before journal_mode/table creation writes any pages.
-    _is_new_db = _db_conn.execute(
+    # before the first table is created; an existing DB is converted lazily by a
+    # one-time VACUUM in prune_caches (off the event loop).  So we only enable it
+    # here on a brand-new database.  Must run before any table is created.
+    _is_new_db = conn.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
     ).fetchone()[0] == 0
     if _is_new_db:
-        _db_conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
 
-    _db_conn.execute("PRAGMA journal_mode=WAL")
-    _db_conn.execute("PRAGMA synchronous=NORMAL")       # safe with WAL; avoids unnecessary fsyncs
-    _db_conn.execute("PRAGMA cache_size=-32000")        # 32 MB in-process page cache
-    _db_conn.execute("PRAGMA temp_store=MEMORY")        # temp tables/indices stay in RAM
-    _db_conn.execute("PRAGMA busy_timeout=5000")        # wait up to 5s if another worker holds the write lock
-    _db_conn.execute("PRAGMA wal_autocheckpoint=1000")  # fold WAL back into main DB at 1000 pages (~4 MB)
+    conn.execute("PRAGMA journal_mode=WAL")             # DB-level; persists in the file
 
-    _db_conn.execute("""
+    conn.execute("""
     CREATE TABLE IF NOT EXISTS rating_cache (
         imdb_id        TEXT PRIMARY KEY,
         ratings_json   TEXT,
@@ -80,7 +98,7 @@ def init_db() -> None:
 
     existing_cols = {
         row[1]
-        for row in _db_conn.execute("PRAGMA table_info(rating_cache)").fetchall()
+        for row in conn.execute("PRAGMA table_info(rating_cache)").fetchall()
     }
     for col, definition in (
         ("award_wins",     "TEXT NOT NULL DEFAULT ''"),
@@ -93,11 +111,11 @@ def init_db() -> None:
         ("is_metacritic",  "INTEGER NOT NULL DEFAULT 0"),
     ):
         if col not in existing_cols:
-            _db_conn.execute(
+            conn.execute(
                 f"ALTER TABLE rating_cache ADD COLUMN {col} {definition}"
             )
 
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS quality_cache (
             imdb_id      TEXT PRIMARY KEY,
             tokens       TEXT,
@@ -106,7 +124,7 @@ def init_db() -> None:
         )
     """)
 
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS trending_cache (
             media_type    TEXT PRIMARY KEY,
             rankings_json TEXT,
@@ -114,7 +132,7 @@ def init_db() -> None:
         )
     """)
 
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tmdb_metadata_cache (
             cache_key           TEXT PRIMARY KEY,
             title               TEXT,
@@ -136,7 +154,7 @@ def init_db() -> None:
 
     # Final composite poster cache.
     # Stores the fully composited JPEG so warm requests skip the entire pipeline.
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS final_poster_cache (
             cache_key  TEXT PRIMARY KEY,
             jpeg_bytes BLOB    NOT NULL,
@@ -147,7 +165,7 @@ def init_db() -> None:
     # Digital release cache.
     # Populated by the r/movieleaks poller; one row per IMDB ID.
     # posted_at is the Reddit post's created_utc (used for expiry).
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS digital_release_cache (
             imdb_id   TEXT PRIMARY KEY,
             posted_at INTEGER NOT NULL
@@ -158,7 +176,7 @@ def init_db() -> None:
     # sash slot is enabled.  Stored separately from the main metadata cache
     # so users who don't enable the feature never pay the extra API call.
     # cache_key = "{media_type}_{tmdb_id}", status = "BluRay"|"Streaming"|"Cinema"|"Production"
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS release_status_cache (
             cache_key TEXT PRIMARY KEY,
             status    TEXT NOT NULL,
@@ -172,7 +190,7 @@ def init_db() -> None:
     # feature from re-running on every config change (composite-cache miss).
     # TMDB image paths are content-addressed (immutable), so results never go
     # stale; cached_at exists only for housekeeping/pruning.
-    _db_conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS text_detection_cache (
             cache_key TEXT PRIMARY KEY,
             has_text  INTEGER NOT NULL,
@@ -183,7 +201,7 @@ def init_db() -> None:
     # Migrate existing tmdb_metadata_cache rows
     existing_meta_cols = {
         row[1]
-        for row in _db_conn.execute("PRAGMA table_info(tmdb_metadata_cache)").fetchall()
+        for row in conn.execute("PRAGMA table_info(tmdb_metadata_cache)").fetchall()
     }
     for col, definition in (
         ("credits_json",        "TEXT"),
@@ -198,11 +216,11 @@ def init_db() -> None:
         ("text_backdrop_path",  "TEXT"),
     ):
         if col not in existing_meta_cols:
-            _db_conn.execute(
+            conn.execute(
                 f"ALTER TABLE tmdb_metadata_cache ADD COLUMN {col} {definition}"
             )
 
-    _db_conn.commit()
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -407,17 +425,35 @@ def prune_caches() -> None:
                 # the DB compactly.  Gated on meaningful dead space so it only fires
                 # when worthwhile, and it runs here in the background prune task
                 # (off the event loop), so it never blocks request handling.
-                page = db.execute("PRAGMA page_size").fetchone()[0]
-                free = db.execute("PRAGMA freelist_count").fetchone()[0]
+                page  = db.execute("PRAGMA page_size").fetchone()[0]
+                free  = db.execute("PRAGMA freelist_count").fetchone()[0]
+                total = db.execute("PRAGMA page_count").fetchone()[0]
+                live_mb = page * (total - free) / 1e6
                 if page * free > 20 * 1024 * 1024:   # >20 MB reclaimable
-                    logger.info(
-                        f"Cache DB: one-time conversion to incremental auto-vacuum, "
-                        f"reclaiming ~{page * free / 1e6:.0f} MB of dead space…"
-                    )
-                    db.commit()                       # close any open transaction
-                    db.execute("PRAGMA auto_vacuum=INCREMENTAL")
-                    db.execute("VACUUM")
-                    logger.info("Cache DB vacuum complete")
+                    # VACUUM rewrites ALL live data while holding an exclusive lock.
+                    # On a large live set that could exceed busy_timeout and lock out
+                    # the other worker process, so cap it: skip (and tell the operator
+                    # to VACUUM offline) when the live data is big.  Small DBs convert
+                    # in well under a second.  (After the first worker converts,
+                    # auto_vacuum becomes INCREMENTAL and every later prune takes the
+                    # cheap incremental path above, so this runs at most once.)
+                    if live_mb > 256:
+                        logger.warning(
+                            f"Cache DB has ~{page * free / 1e6:.0f} MB reclaimable but "
+                            f"{live_mb:.0f} MB live — skipping automatic VACUUM to avoid "
+                            f"a long exclusive lock. Reclaim offline with: "
+                            f"sqlite3 {DB_PATH} 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'"
+                        )
+                    else:
+                        logger.info(
+                            f"Cache DB: one-time conversion to incremental auto-vacuum, "
+                            f"reclaiming ~{page * free / 1e6:.0f} MB of dead space "
+                            f"({live_mb:.0f} MB live)…"
+                        )
+                        db.commit()                   # close any open transaction
+                        db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+                        db.execute("VACUUM")
+                        logger.info("Cache DB vacuum complete")
 
     except Exception as exc:
         logger.error(f"Cache prune error: {exc}")
