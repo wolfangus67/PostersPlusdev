@@ -239,7 +239,7 @@ from quality import (
     parse_quality,
     render_badges_left,
 )
-from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label
+from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label, _draw_solid_pip
 from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status, svg_logo_supported, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
@@ -364,6 +364,11 @@ class RequestConfig:
     minimalist_mode_font_size_ratio:  float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_SIZE_RATIO)
     minimalist_mode_font_x_offset: float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_X_OFFSET)
     minimalist_mode_font_y_offset: float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_Y_OFFSET)
+    # What to append after the genre in Minimalist mode:
+    #   0 = Year (Genre + year, rating as a colour-coded pip — the original look)
+    #   1 = Rating (Genre | Score, score printed as text)
+    #   2 = Year + Rating (Genre | Year | Score)
+    minimalist_append_mode: int = 0
 
     # Compact mode (rating_display_mode == 4) — "all info in one strip"
     # Year is OFF by default; the smaller line lets the font run a bit larger
@@ -393,6 +398,10 @@ class RequestConfig:
     #   "original_native":           original → native → text
     #   "native_text":               native → text (no original-language logo)
     logo_priority: str = "native_original"
+    # Fallback-poster style for titles with no art: "minimal" (procedural textured
+    # backdrop) or "photoreal" (hand-made photographic art that blends with real
+    # posters).  Missing photoreal art degrades to the minimal set.
+    fallback_bg_style: str = "minimal"
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
     muted: bool = False
     textless: bool = False
@@ -542,6 +551,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_mode_font_size_ratio = _f("minimalist_mode_font_size_ratio", cfg.minimalist_mode_font_size_ratio, 0.0, 0.5)
     cfg.minimalist_mode_font_x_offset = _f("minimalist_mode_font_x_offset", cfg.minimalist_mode_font_x_offset, 0.0, 1.0)
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
+    cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 2)
 
     cfg.compact_font_size_ratio = _f("compact_font_size_ratio", cfg.compact_font_size_ratio, 0.0, 0.5)
     cfg.compact_y_offset        = _f("compact_y_offset",        cfg.compact_y_offset,        0.0, 1.0)
@@ -571,6 +581,9 @@ def build_request_config(params: dict) -> RequestConfig:
     elif "logo_native_fallback" in params:
         # Legacy param (boolean): true → native_original, false → native_text.
         cfg.logo_priority = "native_original" if _b("logo_native_fallback", True) else "native_text"
+    _fbs = (params.get("fallback_bg_style") or "").strip().lower()
+    if _fbs in ("minimal", "photoreal"):
+        cfg.fallback_bg_style = _fbs
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
 
     return cfg
@@ -675,7 +688,7 @@ _FALLBACK_DEFAULT_TINT = (1.0, 1.0, 1.4)   # neutral cool blue
 # Display-only label shortenings.  Some genre names are too wide for the poster
 # label strip; shortening them reads better than shrinking the font.  These map
 # the genre name to its *printed* form only — the original genre key is still
-# used for font / colour / mascot / background lookups.
+# used for font / colour / background lookups.
 _GENRE_LABEL_OVERRIDES: dict[str, str] = {
     "Documentary": "Doc",
 }
@@ -734,7 +747,7 @@ def build_poster(
     draw = ImageDraw.Draw(image)
 
     # Printed form of the genre (e.g. "Documentary" → "Doc").  Use this only for
-    # text drawn on the poster; keep `genre` for font / colour / mascot lookups.
+    # text drawn on the poster; keep `genre` for font / colour lookups.
     genre_label = _GENRE_LABEL_OVERRIDES.get(genre, genre)
 
     # --- TOP GRADIENT (vectorised) ---
@@ -937,21 +950,6 @@ def build_poster(
         block_top      = title_cy - total_height // 2
         shadow_offset  = max(2, int(font_size * 0.04))
 
-        # ── Genre mascot ─────────────────────────────────────────────────────
-        # On genuine no-art fallback canvases, place a cute genre-themed cartoon
-        # above the title so a missing-poster card feels intentional and fun
-        # rather than bare.  Skipped when there's real art behind the title.
-        if no_poster:
-            mascot = _load_genre_emoji(genre)
-            if mascot is not None:
-                m_size = int(width * 0.30)               # ~150 px on a 500 px poster
-                mascot = mascot.resize((m_size, m_size), Image.LANCZOS)
-                m_gap  = int(height * 0.03)
-                m_x    = (width - m_size) // 2
-                m_y    = block_top - m_gap - m_size
-                if m_y >= int(height * 0.05):            # only if it fits comfortably
-                    image.paste(mascot, (m_x, m_y), mascot)
-
         for i, line in enumerate(lines):
             line_cy = block_top + i * line_height + line_height // 2
             tx, ty  = _text_center(draw, line, font, width / 2, line_cy)  # type: ignore
@@ -1058,43 +1056,55 @@ def build_poster(
 
             y = round(height * cfg.minimalist_mode_font_y_offset)
             right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
+            _ink = (235, 235, 235, 255)
 
-            year_text  = str(release_year or "")
-            genre_text = genre_label
+            # Text segments framed by vertical pips (the pip frames better than a
+            # "|" glyph).  Mode 0 ("Year") shows the rating ONLY via a pip coloured
+            # by score (genre · year); modes 1/2 print the score as text and use a
+            # neutral silver pip purely as a separator.
+            _has_score = score not in ("N/A", None)
+            if cfg.minimalist_append_mode == 0:
+                segments    = [genre_label] + ([str(release_year)] if release_year else [])
+                _pip_silver = False
+            elif cfg.minimalist_append_mode == 1:
+                segments    = [genre_label] + ([str(score)] if _has_score else [])
+                _pip_silver = True
+            else:  # 2 — Year + Rating
+                segments = ([genre_label]
+                            + ([str(release_year)] if release_year else [])
+                            + ([str(score)] if _has_score else []))
+                _pip_silver = True
 
             pip_gap = int(font_size * 0.55)
             pip_w   = max(4, int(font_size * 0.18))
             pip_h   = int(font_size * 1.4)
+            pip_cy  = round(y + font_size * 0.60)
 
-            genre_bb = draw.textbbox((0, 0), genre_text, font=font_meta)
-            genre_w  = genre_bb[2] - genre_bb[0]
+            # Lay out right-to-left: each text segment, with a pip between pairs.
+            cursor   = right_edge
+            text_ops = []   # (x, segment)
+            pip_xs   = []
+            for i in range(len(segments) - 1, -1, -1):
+                seg   = segments[i]
+                seg_x = cursor - draw.textlength(seg, font=font_meta)
+                text_ops.append((seg_x, seg))
+                cursor = seg_x
+                if i > 0:                      # a segment sits to the left → pip
+                    cursor -= pip_gap
+                    pip_x  = cursor - pip_w
+                    pip_xs.append(pip_x)
+                    cursor = pip_x - pip_gap
 
-            if year_text:
-                year_bb = draw.textbbox((0, 0), year_text, font=font_meta)
-                year_w  = year_bb[2] - year_bb[0]
-            else:
-                year_w = 0
-
-            pip_x  = right_edge - year_w - pip_gap - pip_w
-            pip_cy = round(y + font_size * 0.60)
-
-            genre_x = pip_x - pip_gap - genre_w
-            draw.text((genre_x, y), genre_text, font=font_meta, fill=(235, 235, 235, 255))
-
-            if year_text:
-                year_x = pip_x + pip_w + pip_gap
-                draw.text((year_x, y), year_text, font=font_meta, fill=(235, 235, 235, 255))
-
-            if score not in ("N/A", None):
-                draw_score_bar_vertical(
-                    image,
-                    score,
-                    x=pip_x,
-                    y_center=pip_cy,
-                    height=pip_h,
-                    width=pip_w,
-                    color_mode=cfg.score_color_mode,
-                )
+            for sx, seg in text_ops:
+                draw.text((sx, y), seg, font=font_meta, fill=_ink)
+            for px in pip_xs:
+                if _pip_silver:
+                    _draw_solid_pip(image, x=px, y_center=pip_cy,
+                                    width=pip_w, height=pip_h, color=(192, 192, 200))
+                else:
+                    draw_score_bar_vertical(image, score, x=px, y_center=pip_cy,
+                                            height=pip_h, width=pip_w,
+                                            color_mode=cfg.score_color_mode)
 
         elif cfg.rating_display_mode == 4:
             # Compact — Genre · Year · Sash text, centred.  Reads the sash
@@ -1188,14 +1198,16 @@ async def lifespan(app: FastAPI):
     # Warm the genre fallback backgrounds into memory so no-art posters render
     # with zero extra latency (same idea as the badge cache warm-up).
     try:
-        _bg_dir = _GENRE_BG_DIR
-        if os.path.isdir(_bg_dir):
-            _warmed = 0
-            for _fn in os.listdir(_bg_dir):
+        _warmed = 0
+        for _style in _GENRE_BG_STYLES:
+            _sdir = os.path.join(_GENRE_BG_DIR, _style)
+            if not os.path.isdir(_sdir):
+                continue
+            for _fn in os.listdir(_sdir):
                 if _fn.lower().endswith(".png"):
-                    _g = _fn[:-4]
-                    if _load_genre_background(_g) is not None:
+                    if _load_genre_background(_fn[:-4], _style) is not None:
                         _warmed += 1
+        if _warmed:
             logger.info(f"Genre backgrounds warmed: {_warmed} entries")
         else:
             logger.info("No genre background art found — using gradient fallbacks")
@@ -1232,26 +1244,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONTS_DIR = os.path.join(BASE_DIR, "fonts")
-_GENRE_EMOJI_DIR = os.path.join(BASE_DIR, "assets", "genre_emoji")
-# Cute genre mascots shown above the title on no-art fallback canvases.
-# OpenMoji (CC-BY-SA 4.0) PNGs named directly by genre (e.g. "Horror.png"),
-# with "default.png" used for any genre without a dedicated mascot.
-_GENRE_EMOJI_DEFAULT = "default"
-
-_emoji_cache: dict[str, "Image.Image | None"] = {}
-
-
-def _load_genre_emoji(genre: str) -> "Image.Image | None":
-    """Load (and cache) the RGBA mascot for a genre, or None if unavailable."""
-    if genre not in _emoji_cache:
-        path = os.path.join(_GENRE_EMOJI_DIR, f"{genre}.png")
-        if not os.path.exists(path):
-            path = os.path.join(_GENRE_EMOJI_DIR, f"{_GENRE_EMOJI_DEFAULT}.png")
-        try:
-            _emoji_cache[genre] = Image.open(path).convert("RGBA")
-        except Exception:
-            _emoji_cache[genre] = None
-    return _emoji_cache[genre]
 
 
 # ── Genre fallback backgrounds ────────────────────────────────────────────
@@ -1260,20 +1252,40 @@ def _load_genre_emoji(genre: str) -> "Image.Image | None":
 # fallback posters instead of the flat gradient.  Cached in memory; a *copy* is
 # returned per request because build_poster draws onto the base.
 _GENRE_BG_DIR = os.path.join(BASE_DIR, "static", "genre_bg")
-_genre_bg_cache: dict[str, "Image.Image | None"] = {}
+# Two interchangeable fallback-background sets, chosen per request via
+# fallback_bg_style: "minimal" (procedural textured) or "photoreal" (hand-made
+# photographic art that blends with real posters).
+_GENRE_BG_STYLES = ("minimal", "photoreal")
+_genre_bg_cache: dict[str, "Image.Image | None"] = {}   # keyed "style/genre"
 
 
-def _load_genre_background(genre: str) -> "Image.Image | None":
-    """Return a fresh RGBA copy of the genre background, or None if none exists."""
-    if genre not in _genre_bg_cache:
-        path = os.path.join(_GENRE_BG_DIR, f"{genre}.png")
-        if not os.path.exists(path):
-            path = os.path.join(_GENRE_BG_DIR, "default.png")
+def _genre_bg_path(style: str, name: str) -> "str | None":
+    """Filesystem path to a genre-background PNG, or None if it doesn't exist."""
+    p = os.path.join(_GENRE_BG_DIR, style, f"{name}.png")
+    return p if os.path.exists(p) else None
+
+
+def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image | None":
+    """Return a fresh RGBA copy of the genre fallback background for *style*, or
+    None if none exists.  A missing image degrades gracefully: the style's
+    default.png → the minimal set's genre/default → None (caller then renders the
+    procedural gradient canvas).  So selecting a not-yet-populated style never
+    breaks — it just falls back to minimal."""
+    if style not in _GENRE_BG_STYLES:
+        style = "minimal"
+    key = f"{style}/{genre}"
+    if key not in _genre_bg_cache:
+        path = (
+            _genre_bg_path(style, genre)
+            or _genre_bg_path(style, "default")
+            or (_genre_bg_path("minimal", genre) if style != "minimal" else None)
+            or _genre_bg_path("minimal", "default")
+        )
         try:
-            _genre_bg_cache[genre] = Image.open(path).convert("RGBA")
+            _genre_bg_cache[key] = Image.open(path).convert("RGBA") if path else None
         except Exception:
-            _genre_bg_cache[genre] = None
-    base = _genre_bg_cache[genre]
+            _genre_bg_cache[key] = None
+    base = _genre_bg_cache[key]
     return base.copy() if base is not None else None
 
 
@@ -1385,20 +1397,25 @@ _DEBUG_GENRE_IDS = {
 
 
 @app.get("/debug/canvas")
-async def debug_canvas(genre: str = "Action", title: str = "Sample Title", access_key: str = ""):
+async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
+                       style: str = "minimal", year: str = "2024",
+                       score: str = "84", access_key: str = ""):
     """
-    Preview a no-art fallback canvas for a given genre/title — renders the
-    genre-tinted gradient, the genre-aware title font, and the genre mascot.
-    Lets you eyeball each genre's cartoon without hunting for a poster-less id.
+    Render a no-art fallback card exactly as a poster-less title would: the genre
+    fallback background (minimal or photoreal set) with the genre-aware title and
+    the usual rating label composited on top.  Lets you eyeball any genre/style
+    without hunting for a title that happens to lack poster art.
     """
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized")
     gid = _DEBUG_GENRE_IDS.get(genre)
-    canvas = _load_genre_background(genre)
+    canvas = _load_genre_background(genre, style)
     if canvas is None:
         canvas = _make_fallback_canvas([gid] if gid else None).convert("RGBA")
     cfg = RequestConfig()
-    img = build_poster(canvas, "—", genre, cfg, fallback_title=title, no_poster=True)
+    _score = int(score) if score.isdigit() else "—"
+    img = build_poster(canvas, _score, genre, cfg, fallback_title=title,
+                       release_year=(year or None), no_poster=True)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="JPEG", quality=90)
     return Response(content=buf.getvalue(), media_type="image/jpeg",
@@ -1406,19 +1423,39 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title", acces
 
 
 @app.get("/debug/fallback-gallery", response_class=HTMLResponse)
-async def fallback_gallery(access_key: str = ""):
+async def fallback_gallery(style: str = "minimal", access_key: str = ""):
     """
-    A self-contained gallery of every genre's no-art fallback card, so an
-    operator can review the mascots + genre fonts at a glance.  Each tile is a
-    live /debug/canvas render.  Gated behind the access key when configured.
+    Self-contained gallery of every genre's no-art fallback card (live
+    /debug/canvas renders), so an operator can review the fallback backgrounds +
+    genre fonts at a glance and compare the minimal vs photoreal sets.  Gated
+    behind the access key when configured.
     """
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
+    if style not in _GENRE_BG_STYLES:
+        style = "minimal"
     _ak = f"&access_key={access_key}" if access_key else ""
+
+    # Every genre that has a background (covers the full genre map + any future
+    # additions), derived from the minimal set so the gallery is never stale.
+    try:
+        _genres = sorted(
+            f[:-4] for f in os.listdir(os.path.join(_GENRE_BG_DIR, "minimal"))
+            if f.lower().endswith(".png") and f[:-4].lower() != "default"
+        )
+    except OSError:
+        _genres = sorted(_DEBUG_GENRE_IDS)
+
     tiles = "".join(
         f'<figure><img loading="lazy" src="/debug/canvas?genre={g}'
-        f'&title={g.replace(" ", "+")}{_ak}" alt="{g}"><figcaption>{g}</figcaption></figure>'
-        for g in sorted(_DEBUG_GENRE_IDS)
+        f'&title={g.replace(" ", "+")}&style={style}{_ak}" alt="{g}">'
+        f'<figcaption>{g}</figcaption></figure>'
+        for g in _genres
+    )
+    _tabs = "".join(
+        f'<a class="{"on" if s == style else ""}" '
+        f'href="/debug/fallback-gallery?style={s}{_ak}">{s.capitalize()}</a>'
+        for s in _GENRE_BG_STYLES
     )
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1426,16 +1463,24 @@ async def fallback_gallery(access_key: str = ""):
 <style>
   body {{ margin:0; background:#0e0e10; color:#e8e8ea;
          font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }}
-  header {{ padding:18px 20px; border-bottom:1px solid #2a2a2e; }}
-  h1 {{ font-size:18px; margin:0; }} p {{ color:#9a9aa0; margin:6px 0 0; font-size:13px; }}
+  header {{ padding:18px 20px; border-bottom:1px solid #2a2a2e;
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }}
+  h1 {{ font-size:18px; margin:0; }} p {{ color:#9a9aa0; margin:0; font-size:13px; }}
+  .tabs a {{ display:inline-block; padding:5px 12px; margin-right:6px; border-radius:8px;
+            font-size:13px; text-decoration:none; color:#c7c7cc; background:#1c1c20;
+            border:1px solid #2a2a2e; }}
+  .tabs a.on {{ background:#3a3a44; color:#fff; border-color:#4a4a56; }}
   .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
            gap:16px; padding:20px; }}
   figure {{ margin:0; }}
   img {{ width:100%; border-radius:10px; display:block; background:#1a1a1d; }}
   figcaption {{ text-align:center; padding-top:8px; font-size:13px; color:#c7c7cc; }}
 </style></head><body>
-<header><h1>Fallback art preview</h1>
-<p>Live render of every genre's no-art card — genre-tinted gradient, genre font, and mascot.</p></header>
+<header>
+  <h1>Fallback art preview</h1>
+  <div class="tabs">{_tabs}</div>
+  <p>Live no-art render for every genre — {len(_genres)} genres, "{style}" set.</p>
+</header>
 <div class="grid">{tiles}</div></body></html>"""
     return HTMLResponse(content=html)
 
@@ -1941,9 +1986,10 @@ async def get_poster(
             _image_coro = fetch_backdrop_image(
                 client, tmdb_id, backdrop_path, avoid_text=_cfg.TEXTLESS_TEXT_DETECTION)
         elif is_no_poster:
-            # Prefer the atmospheric genre background; fall back to the flat
-            # genre-tinted gradient if no background art exists for this genre.
-            _bg = _load_genre_background(_tmdb_genre)
+            # Prefer the atmospheric genre background (minimal or photoreal set,
+            # per the request); fall back to the flat genre-tinted gradient if no
+            # background art exists for this genre in either set.
+            _bg = _load_genre_background(_tmdb_genre, rcfg.fallback_bg_style)
             _image_coro = _resolved(_bg if _bg is not None else _make_fallback_canvas(genre_ids))
         else:
             # Option A: the title has only text-bearing art (no textless poster

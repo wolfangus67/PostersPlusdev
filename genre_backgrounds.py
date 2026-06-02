@@ -10,7 +10,7 @@ Run as a script to (re)write the PNGs into static/genre_bg/:
     python genre_backgrounds.py
 
 At runtime main.py loads those PNGs (cached in memory) as the base for no-art
-fallback posters, then composites the title / mascot / sash on top as usual.
+fallback posters, then composites the title / sash on top as usual.
 Drop a hand-made 500x750 PNG into static/genre_bg/<Genre>.png to override any
 genre's procedural art — the loader prefers an existing file.
 
@@ -308,6 +308,15 @@ _LOOKS = {
     "War":         lambda s: _smoke(s),
     "Western":     lambda s: _sunset(s),
     "Music":       lambda s: _beams_color(s),
+    "Crime":       lambda s: _noir(s, cool=False),
+    "News":        lambda s: _noir(s, cool=True),
+    "Talk":        lambda s: _beams_color(s),
+    "Kids":        lambda s: _bokeh(s, [(30, 34, 50), (10, 12, 18),
+                                        (250, 90, 90), (250, 210, 70), (90, 200, 230)]),
+    "Reality":     lambda s: _bokeh(s, [(40, 26, 30), (14, 10, 12),
+                                        (240, 110, 90), (250, 190, 90), (220, 80, 140)]),
+    "Soap":        lambda s: _bokeh(s, [(44, 24, 32), (14, 8, 12),
+                                        (230, 100, 130), (250, 170, 140), (200, 80, 120)]),
 }
 _DEFAULT_LOOK = _deep
 
@@ -332,6 +341,8 @@ def generate_all(out_dir: str) -> int:
 
 if __name__ == "__main__":
     _here = os.path.dirname(os.path.abspath(__file__))
-    _out = os.path.join(_here, "static", "genre_bg")
+    # Minimal/procedural set lives under genre_bg/minimal/; the photorealistic
+    # set (genre_bg/photoreal/) is hand-supplied, not generated here.
+    _out = os.path.join(_here, "static", "genre_bg", "minimal")
     count = generate_all(_out)
     print(f"Generated {count} genre backgrounds in {_out}")

@@ -369,6 +369,11 @@
     margin-top: 4px;
     line-height: 1.6;
   }
+  .field-hint a {
+    color: var(--accent, #6ea8fe);
+    text-decoration: underline;
+    cursor: pointer;
+  }
 
   .field-label-row {
     display: flex;
@@ -1577,6 +1582,14 @@
               <div class="field-hint">Native is the language you pick, original is the source language of the content and text is plain text render.</div>
             </div>
             <div class="field" style="margin-top:6px;">
+              <label class="field-label">Fallback Poster Style</label>
+              <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
+                <option value="minimal" selected>Minimal (textured backdrop)</option>
+                <option value="photoreal">Photorealistic</option>
+              </select>
+              <div class="field-hint">What to show for titles with no poster art: a minimal genre-tinted textured backdrop, or photorealistic art that blends with real posters. <a href="#" onclick="openFallbackGallery(); return false;">Preview every genre</a>.</div>
+            </div>
+            <div class="field" style="margin-top:6px;">
               <label class="field-label">Top Vignette</label>
               <select id="cfg-top-gradient" onchange="build(); queuePreviewReload()">
                 <option value="off">Off</option>
@@ -1686,6 +1699,15 @@
               </div>
             </div>
             <div id="rating-mode3-fields" style="display:none;">
+              <div class="field">
+                <label class="field-label">Append</label>
+                <select id="cfg-min-append" onchange="build(); queuePreviewReload()">
+                  <option value="0" selected>Year</option>
+                  <option value="1">Rating</option>
+                  <option value="2">Year + Rating</option>
+                </select>
+                <div class="field-hint">Segments framed by a vertical pip. Year: genre · year, rating shown only by the pip's colour (no number). Rating: genre · score. Year + Rating: genre · year · score (score printed as text; pips are silver).</div>
+              </div>
               <div class="field">
                 <label class="field-label">Font Size</label>
                 <div class="range-row">
@@ -1798,14 +1820,6 @@
                 <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
                 <span class="range-val" id="rng-lb">0.28</span>
               </div>
-            </div>
-            <div class="field" style="margin-top:6px;">
-              <button type="button" onclick="openFallbackGallery()"
-                      style="width:100%; padding:8px 10px; border-radius:6px; cursor:pointer;
-                             background:#1e1e1e; color:#e0e0e0; border:1px solid #444;">
-                🖼 Preview fallback art
-              </button>
-              <div class="field-hint" style="margin-top:4px;">Opens a gallery of the genre mascots &amp; fonts used when a title has no poster art.</div>
             </div>
           </div>
         </div>
@@ -2975,6 +2989,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('numeric_score_y_offset',        n('cfg-y-mode2').toFixed(2));
       params.set('score_out_of_10',               c('tog-score-out-of-10') ? 'true' : 'false');
     } else if (ratingMode === 3) {
+      params.set('minimalist_append_mode',          ni('cfg-min-append'));
       params.set('minimalist_mode_font_size_ratio', n('cfg-font-mode3').toFixed(3));
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
@@ -2994,6 +3009,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('textless',              c('tog-textless') ? 'true' : 'false');
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
+  params.set('fallback_bg_style',     vEl('cfg-fallback-bg-style') || 'minimal');
   params.set('logo_max_w_ratio',      n('cfg-logo-w').toFixed(2));
   params.set('logo_max_h_ratio',  n('cfg-logo-h').toFixed(2));
   params.set('logo_bottom_ratio', n('cfg-logo-bottom').toFixed(2));
@@ -3336,6 +3352,7 @@ function importUrl(urlStr) {
     _setEl('cfg-logo-priority',
            (p.get('logo_native_fallback') === 'false') ? 'native_text' : 'native_original');
   }
+  if (p.has('fallback_bg_style')) _setEl('cfg-fallback-bg-style', p.get('fallback_bg_style'));
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
     let _tg = (p.get('top_gradient') || '').toLowerCase();
@@ -3387,6 +3404,7 @@ function importUrl(urlStr) {
   if (p.has('score_out_of_10'))                _setEl('tog-score-out-of-10', p.get('score_out_of_10'));
   if (p.has('accent_bar_y_offset'))            _setEl('cfg-y-mode1',      p.get('accent_bar_y_offset'));
   if (p.has('numeric_score_y_offset'))         _setEl('cfg-y-mode2',      p.get('numeric_score_y_offset'));
+  if (p.has('minimalist_append_mode'))         _setEl('cfg-min-append',   p.get('minimalist_append_mode'));
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
