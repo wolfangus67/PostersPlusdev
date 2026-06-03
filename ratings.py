@@ -374,12 +374,14 @@ def draw_frosted_bar(
     font_size_ratio: float = 0.40,
     frost_opacity: float = 0.75,
     bottom_inset: float = 0.0,
+    style: str = "frosted",  # "frosted" | "silver" | "gold"
 ) -> Image.Image:
-    """Full-width frosted glass strip near the bottom of the poster.
+    """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
-    Three sections — left_text (left-aligned), center_text (centred),
-    right_text (right-aligned). bottom_inset shifts the bar upward so text
-    survives client bottom-crop.
+    style="frosted" — blurred poster crop + colour-tinted overlay, dark text.
+    style="silver"  — semi-transparent dark gradient body, silver/white text.
+    style="gold"    — semi-transparent dark gradient body, gold text.
+    bottom_inset shifts the bar upward so text survives client bottom-crop.
     """
     import os, colorsys as _cs
 
@@ -397,32 +399,51 @@ def draw_frosted_bar(
     except IOError:
         font = ImageFont.load_default()
 
-    # Measure a fixed reference string that covers every glyph class used in
-    # the bar (ascenders A, descenders gypq, numerals 0, star, separators).
-    # Using the actual text would give different heights for "Crime" vs "Mystery"
-    # (the y-descender changes rendered_h), shifting the baseline poster to poster.
-    _REF = "Agypq0★·"
-    _ref_b  = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), _REF, font=font)
-    text_y  = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1] + max(1, int(bar_h * 0.05))
+    # Fixed reference string so every poster uses the same text_y baseline.
+    _REF   = "Agypq0★·"
+    _ref_b = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), _REF, font=font)
+    text_y = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1] + max(1, int(bar_h * 0.05))
 
-    ink    = (15, 15, 15, 248)
-    blur_r = max(6, int(bar_h * 0.45))
-    crop_y = max(0, bar_y)
-    crop_h = min(bar_h, height - crop_y)
-    region = image.crop((0, crop_y, width, crop_y + crop_h))
+    _SILVER = (210, 210, 218)
+    _GOLD   = (212, 175, 55)
 
-    blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
-    thumb   = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
-    arr     = np.array(thumb, dtype=np.float32)
-    dr, dg, db = arr[:,:,0].mean(), arr[:,:,1].mean(), arr[:,:,2].mean()
-    _h2, _s, _v = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
-    tr, tg, tb  = _cs.hsv_to_rgb(_h2, min(1.0, _s*1.2), _v*0.4+0.60)
-    fr_r = int(tr*255*0.6 + 255*0.4)
-    fr_g = int(tg*255*0.6 + 255*0.4)
-    fr_b = int(tb*255*0.6 + 255*0.4)
-    base    = blurred.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
-    frost   = Image.new("RGBA", (width, bar_h), (fr_r, fr_g, fr_b, int(frost_opacity*255)))
-    bar_img = Image.alpha_composite(base, frost)
+    if style in ("silver", "gold"):
+        # ── Black body with top accent line, silver text on both ─────────────
+        accent  = _GOLD if style == "gold" else _SILVER
+        ink     = (*_SILVER, 248)   # text is always silver
+        stripe  = max(2, int(bar_h * 0.06))   # accent stripe height at top
+        bar_arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
+        # Body: near-black, opacity driven by frost_opacity slider
+        bar_arr[:, :, :3] = 12
+        bar_arr[:, :,  3] = int(frost_opacity * 255)
+        # Top accent stripe in silver or gold (always near-opaque)
+        bar_arr[:stripe, :, 0] = accent[0]
+        bar_arr[:stripe, :, 1] = accent[1]
+        bar_arr[:stripe, :, 2] = accent[2]
+        bar_arr[:stripe, :, 3] = 240
+        bar_img = Image.fromarray(bar_arr, "RGBA")
+        # Nudge text down by half the stripe height so it sits centred in the
+        # remaining dark body rather than optically high due to the accent line.
+        text_y += stripe // 2
+    else:
+        # ── Frosted glass body, dark text ─────────────────────────────────────
+        ink    = (15, 15, 15, 248)
+        blur_r = max(6, int(bar_h * 0.45))
+        crop_y = max(0, bar_y)
+        crop_h = min(bar_h, height - crop_y)
+        region  = image.crop((0, crop_y, width, crop_y + crop_h))
+        blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        thumb   = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
+        arr     = np.array(thumb, dtype=np.float32)
+        dr, dg, db = arr[:,:,0].mean(), arr[:,:,1].mean(), arr[:,:,2].mean()
+        _h2, _s, _v = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
+        tr, tg, tb  = _cs.hsv_to_rgb(_h2, min(1.0, _s*1.2), _v*0.4+0.60)
+        fr_r = int(tr*255*0.6 + 255*0.4)
+        fr_g = int(tg*255*0.6 + 255*0.4)
+        fr_b = int(tb*255*0.6 + 255*0.4)
+        base    = blurred.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
+        frost   = Image.new("RGBA", (width, bar_h), (fr_r, fr_g, fr_b, int(frost_opacity*255)))
+        bar_img = Image.alpha_composite(base, frost)
 
     txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
     td        = ImageDraw.Draw(txt_layer)

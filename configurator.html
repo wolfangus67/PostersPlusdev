@@ -1625,7 +1625,33 @@
               </div>
             </div>
             <div id="rating-mode4-fields" style="display:none;">
-              <div class="field">
+              <div class="field" style="margin-bottom:0;">
+                <label class="field-label">Style</label>
+                <select id="cfg-bar-style" onchange="build(); queuePreviewReload()">
+                  <option value="frosted" selected>Frosted</option>
+                  <option value="silver">Black / Silver</option>
+                  <option value="gold">Black / Gold</option>
+                </select>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Show Year</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bar-show-year" checked onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Score out of 10</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="field" style="margin-top:10px;">
                 <label class="field-label">Bar Height</label>
                 <div class="range-row">
                   <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.075" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
@@ -2908,6 +2934,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
     } else if (ratingMode === 4) {
+      params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
+      params.set('bar_show_year',       c('tog-bar-show-year') ? 'true' : 'false');
+      params.set('bar_score_out_of_10', c('tog-bar-score-10') ? 'true' : 'false');
       params.set('bar_height_ratio',    n('cfg-bar-height').toFixed(3));
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
@@ -3331,6 +3360,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
+  if (p.has('bar_style'))           _setEl('cfg-bar-style',     p.get('bar_style'));
+  if (p.has('bar_show_year'))       _setEl('tog-bar-show-year', p.get('bar_show_year'));
+  if (p.has('bar_score_out_of_10')) _setEl('tog-bar-score-10',  p.get('bar_score_out_of_10'));
   if (p.has('bar_height_ratio'))    _setEl('cfg-bar-height', p.get('bar_height_ratio'));
   if (p.has('bar_font_size_ratio')) _setEl('cfg-bar-font',   p.get('bar_font_size_ratio'));
   if (p.has('bar_frost_opacity'))   _setEl('cfg-bar-frost',  p.get('bar_frost_opacity'));

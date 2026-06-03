@@ -375,6 +375,9 @@ class RequestConfig:
     bar_font_size_ratio:     float = 0.58
     bar_frost_opacity:       float = 0.50
     bar_bottom_inset:        float = 0.009
+    bar_style:               str   = "frosted"  # "frosted" | "silver" | "gold"
+    bar_score_out_of_10:     bool  = False
+    bar_show_year:           bool  = True
 
     logo_max_w_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
@@ -563,6 +566,11 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
     cfg.bar_frost_opacity       = _f("bar_frost_opacity",       cfg.bar_frost_opacity,       0.0,  1.0)
     cfg.bar_bottom_inset        = _f("bar_bottom_inset",        cfg.bar_bottom_inset,        0.0,  0.10)
+    _bst = (params.get("bar_style") or "").strip().lower()
+    if _bst in ("frosted", "silver", "gold"):
+        cfg.bar_style = _bst
+    cfg.bar_score_out_of_10     = _b("bar_score_out_of_10",     cfg.bar_score_out_of_10)
+    cfg.bar_show_year           = _b("bar_show_year",           cfg.bar_show_year)
 
     cfg.logo_max_w_ratio  = _f("logo_max_w_ratio",  cfg.logo_max_w_ratio,  0.0, 1.5)
     cfg.logo_max_h_ratio  = _f("logo_max_h_ratio",  cfg.logo_max_h_ratio,  0.0, 1.0)
@@ -1126,24 +1134,35 @@ def build_poster(
                                     width=pip_w, height=pip_h, color=(192, 192, 200))
 
         elif cfg.rating_display_mode == 4:
-            # Frosted bar/notch — centred pipe-separated label at the bottom.
-            # Format: Year | Genre | ★ Rating  (omit any missing field)
-            _score_str = str(score) if score not in ("N/A", None) else ""
-            _year_str  = str(release_year) if release_year else ""
-            _parts     = [p for p in [
+            # Frosted bar — centred dot-separated label at the bottom.
+            # Format: Year · Genre · ★ Rating  (omit any missing field)
+            _has_score = score not in ("N/A", None)
+            if _has_score:
+                if cfg.bar_score_out_of_10:
+                    _score_str = "10" if int(score) >= 100 else f"{int(score) / 10:.1f}"
+                else:
+                    _score_str = str(score)
+            else:
+                _score_str = ""
+            _year_str = str(release_year) if (release_year and cfg.bar_show_year) else ""
+            _parts    = [p for p in [
                 _year_str,
                 genre_label or "",
                 f"★ {_score_str}" if _score_str else "",
             ] if p]
+            # Use wider spacing when year is hidden — only one separator,
+            # so the extra room reads better with fewer elements.
+            _sep = "  ·  " if len(_parts) <= 2 else " · "
             image = draw_frosted_bar(
                 image,
                 left_text   = "",
-                center_text = " · ".join(_parts),
+                center_text = _sep.join(_parts),
                 right_text  = "",
                 bar_height_ratio = cfg.bar_height_ratio,
                 font_size_ratio  = cfg.bar_font_size_ratio,
                 frost_opacity    = cfg.bar_frost_opacity,
                 bottom_inset     = cfg.bar_bottom_inset,
+                style            = cfg.bar_style,
             )
 
     # --- Discovery sash / badge ---
