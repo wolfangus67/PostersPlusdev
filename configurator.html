@@ -1627,20 +1627,34 @@
             <div id="rating-mode4-fields" style="display:none;">
               <div class="field" style="margin-bottom:0;">
                 <label class="field-label">Style</label>
-                <select id="cfg-bar-style" onchange="build(); queuePreviewReload()">
+                <select id="cfg-bar-style" onchange="_updateBarRatingRows(); build(); queuePreviewReload()">
                   <option value="frosted" selected>Frosted</option>
-                  <option value="silver">Black / Silver</option>
-                  <option value="gold">Black / Gold</option>
+                  <option value="pure_black">Pure Black</option>
+                  <option value="silver">Black + Silver</option>
+                  <option value="gold">Black + Gold</option>
+                  <option value="rating_frosted">Frosted Rating Bar</option>
+                  <option value="rating_black">Black Rating Bar</option>
                 </select>
               </div>
-              <div class="toggle-row">
-                <div>
-                  <div class="toggle-label">Show Year</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-bar-show-year" checked onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
+              <div class="field" id="bar-accent-field" style="display:none; margin-top:8px; margin-bottom:0;">
+                <label class="field-label">Rating Bar Colour</label>
+                <select id="cfg-bar-accent" onchange="build(); queuePreviewReload()">
+                  <option value="silver" selected>Pure Silver</option>
+                  <option value="sample">Colour Sample</option>
+                  <option value="gold">Pure Gold</option>
+                  <option value="palette_2">Prestige</option>
+                  <option value="palette_0">Light</option>
+                  <option value="palette_1">Dark/Light</option>
+                </select>
+              </div>
+              <div class="field" style="margin-top:10px; margin-bottom:0;">
+                <label class="field-label">Append</label>
+                <select id="cfg-bar4-append" onchange="build(); queuePreviewReload()">
+                  <option value="rating_year" selected>Rating and Year</option>
+                  <option value="rating">Rating</option>
+                  <option value="year">Year</option>
+                  <option value="sash">Info Sash</option>
+                </select>
               </div>
               <div class="toggle-row">
                 <div>
@@ -1654,29 +1668,29 @@
               <div class="field" style="margin-top:10px;">
                 <label class="field-label">Bar Height</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.075" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bh5">0.075</span>
+                  <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.080" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bh5">0.080</span>
                 </div>
               </div>
               <div class="field">
                 <label class="field-label">Font Size</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-bar-font" min="0.15" max="0.70" step="0.01" value="0.58" oninput="updateRange(this,'rng-bf5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bf5">0.58</span>
+                  <input type="range" id="cfg-bar-font" min="0.15" max="0.70" step="0.01" value="0.55" oninput="updateRange(this,'rng-bf5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bf5">0.55</span>
                 </div>
               </div>
               <div class="field">
                 <label class="field-label">Frost Opacity</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.50" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bo5">0.50</span>
+                  <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.85" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bo5">0.85</span>
                 </div>
               </div>
               <div class="field">
                 <label class="field-label">Bottom Inset</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.009" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bi5">0.009</span>
+                  <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.007" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bi5">0.007</span>
                 </div>
               </div>
             </div>
@@ -2935,7 +2949,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
-      params.set('bar_show_year',       c('tog-bar-show-year') ? 'true' : 'false');
+      const _bs = vEl('cfg-bar-style') || '';
+      if (_bs === 'rating_black' || _bs === 'rating_frosted')
+        params.set('bar_accent', vEl('cfg-bar-accent') || 'silver');
+      params.set('bar_append',          vEl('cfg-bar4-append') || 'rating_year');
       params.set('bar_score_out_of_10', c('tog-bar-score-10') ? 'true' : 'false');
       params.set('bar_height_ratio',    n('cfg-bar-height').toFixed(3));
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
@@ -2987,7 +3004,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // Emit it whenever ANY of those is active so the user's drag-to-reorder /
   // disable choices are respected, not silently overridden by server defaults.
   const _sashTextNeeded = showSash
-    || (ratingMode === 1 && ni('cfg-bar-append') !== 0);
+    || (ratingMode === 1 && ni('cfg-bar-append') !== 0)
+    || (ratingMode === 4 && vEl('cfg-bar4-append') === 'sash');
   if (_sashTextNeeded) {
     params.set('sash_priority', getSashPriorityParam());
   }
@@ -3172,6 +3190,22 @@ function updateOriginalArt() {
   if (sf) sf.style.display = on ? '' : 'none';
 }
 
+function _updateBarRatingRows() {
+  const s = vEl('cfg-bar-style') || '';
+  const isFrosted = s === 'rating_frosted';
+  const isBlack   = s === 'rating_black';
+  document.getElementById('bar-accent-field').style.display = (isFrosted || isBlack) ? '' : 'none';
+  // Frosted: show only Silver + Colour Sample. Black: hide Colour Sample, show rest.
+  document.querySelectorAll('#cfg-bar-accent option').forEach(opt => {
+    if (isFrosted)  opt.style.display = (opt.value === 'silver' || opt.value === 'sample') ? '' : 'none';
+    else            opt.style.display = opt.value === 'sample' ? 'none' : '';
+  });
+  // If current selection is hidden, reset to first visible option.
+  const cur = vEl('cfg-bar-accent') || '';
+  const visible = [...document.querySelectorAll('#cfg-bar-accent option')].filter(o => o.style.display !== 'none');
+  if (visible.length && !visible.find(o => o.value === cur)) _setEl('cfg-bar-accent', visible[0].value);
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   document.getElementById('rating-mode1-fields').style.display      = mode === 1 ? '' : 'none';
@@ -3180,6 +3214,7 @@ function updateRatingFields() {
   document.getElementById('rating-mode4-fields').style.display      = mode === 4 ? '' : 'none';
   document.getElementById('rating-glow-fields').style.display       = mode === 1 ? '' : 'none';
   document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3) ? '' : 'none';
+  if (mode === 4) _updateBarRatingRows();
 }
 
 // ---------------------------------------------------------------------------
@@ -3360,9 +3395,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
-  if (p.has('bar_style'))           _setEl('cfg-bar-style',     p.get('bar_style'));
-  if (p.has('bar_show_year'))       _setEl('tog-bar-show-year', p.get('bar_show_year'));
-  if (p.has('bar_score_out_of_10')) _setEl('tog-bar-score-10',  p.get('bar_score_out_of_10'));
+  if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
+  if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
+  if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
+  if (p.has('bar_score_out_of_10'))   _setEl('tog-bar-score-10',  p.get('bar_score_out_of_10'));
   if (p.has('bar_height_ratio'))    _setEl('cfg-bar-height', p.get('bar_height_ratio'));
   if (p.has('bar_font_size_ratio')) _setEl('cfg-bar-font',   p.get('bar_font_size_ratio'));
   if (p.has('bar_frost_opacity'))   _setEl('cfg-bar-frost',  p.get('bar_frost_opacity'));

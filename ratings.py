@@ -374,14 +374,18 @@ def draw_frosted_bar(
     font_size_ratio: float = 0.40,
     frost_opacity: float = 0.75,
     bottom_inset: float = 0.0,
-    style: str = "frosted",  # "frosted" | "silver" | "gold"
+    style: str = "frosted",
+    score: int | str | None = None,
+    fill_color: tuple[int, int, int] | None = None,
 ) -> Image.Image:
     """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
-    style="frosted" — blurred poster crop + colour-tinted overlay, dark text.
-    style="silver"  — semi-transparent dark gradient body, silver/white text.
-    style="gold"    — semi-transparent dark gradient body, gold text.
-    bottom_inset shifts the bar upward so text survives client bottom-crop.
+    style="frosted"        — plain frosted glass body, dark text.
+    style="silver"         — dark body, solid silver accent stripe, silver text.
+    style="gold"           — dark body, solid gold accent stripe, silver text.
+    style="rating_black"   — dark body, rating progress bar (fill_color drives colour).
+    style="rating_frosted" — frosted body, dark semi-transparent rating bar for contrast.
+    fill_color pre-resolved accent colour for rating_black (ignored for rating_frosted).
     """
     import os, colorsys as _cs
 
@@ -399,51 +403,113 @@ def draw_frosted_bar(
     except IOError:
         font = ImageFont.load_default()
 
-    # Fixed reference string so every poster uses the same text_y baseline.
     _REF   = "Agypq0★·"
     _ref_b = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), _REF, font=font)
-    text_y = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1] + max(1, int(bar_h * 0.05))
+    # Pure optical centering — no base nudge; the stripe branches add their own
+    # downward compensation to account for the accent bar stealing top space.
+    text_y = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1]
 
     _SILVER = (210, 210, 218)
     _GOLD   = (212, 175, 55)
+    # Solid accent styles use a thin stripe; rating bar modes use a larger one.
+    _accent_stripe = max(2, int(bar_h * 0.06))
+    _rating_stripe = max(3, int(bar_h * 0.10))
+    stripe = _accent_stripe  # overridden per branch below
+    _lift          = max(1, int(bar_h * 0.025))   # small upward correction for non-plain styles
+    _stripe_nudge  = max(1, int(bar_h * 0.05)) + _rating_stripe // 2 - _lift
 
-    if style in ("silver", "gold"):
-        # ── Black body with top accent line, silver text on both ─────────────
-        accent  = _GOLD if style == "gold" else _SILVER
-        ink     = (*_SILVER, 248)   # text is always silver
-        stripe  = max(2, int(bar_h * 0.06))   # accent stripe height at top
-        bar_arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
-        # Body: near-black, opacity driven by frost_opacity slider
-        bar_arr[:, :, :3] = 12
-        bar_arr[:, :,  3] = int(frost_opacity * 255)
-        # Top accent stripe in silver or gold (always near-opaque)
-        bar_arr[:stripe, :, 0] = accent[0]
-        bar_arr[:stripe, :, 1] = accent[1]
-        bar_arr[:stripe, :, 2] = accent[2]
-        bar_arr[:stripe, :, 3] = 240
-        bar_img = Image.fromarray(bar_arr, "RGBA")
-        # Nudge text down by half the stripe height so it sits centred in the
-        # remaining dark body rather than optically high due to the accent line.
-        text_y += stripe // 2
-    else:
-        # ── Frosted glass body, dark text ─────────────────────────────────────
-        ink    = (15, 15, 15, 248)
+    def _score_pct() -> int:
+        try:    return max(0, min(int(score), 100))   # type: ignore[arg-type]
+        except: return 0
+
+    def _build_frosted_base() -> tuple[Image.Image, float, float, float]:
+        """Returns (bar_img, raw_h, raw_s, raw_v) — HSV before lightening."""
         blur_r = max(6, int(bar_h * 0.45))
-        crop_y = max(0, bar_y)
-        crop_h = min(bar_h, height - crop_y)
-        region  = image.crop((0, crop_y, width, crop_y + crop_h))
-        blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        thumb   = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
-        arr     = np.array(thumb, dtype=np.float32)
-        dr, dg, db = arr[:,:,0].mean(), arr[:,:,1].mean(), arr[:,:,2].mean()
-        _h2, _s, _v = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
-        tr, tg, tb  = _cs.hsv_to_rgb(_h2, min(1.0, _s*1.2), _v*0.4+0.60)
-        fr_r = int(tr*255*0.6 + 255*0.4)
-        fr_g = int(tg*255*0.6 + 255*0.4)
-        fr_b = int(tb*255*0.6 + 255*0.4)
-        base    = blurred.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
-        frost   = Image.new("RGBA", (width, bar_h), (fr_r, fr_g, fr_b, int(frost_opacity*255)))
-        bar_img = Image.alpha_composite(base, frost)
+        cy = max(0, bar_y); ch = min(bar_h, height - cy)
+        reg = image.crop((0, cy, width, cy + ch))
+        blr = reg.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
+        ar  = np.array(th, dtype=np.float32)
+        dr, dg, db = ar[:,:,0].mean(), ar[:,:,1].mean(), ar[:,:,2].mean()
+        _h2, _s2, _v2 = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
+        tr, tg, tb = _cs.hsv_to_rgb(_h2, min(1.0, _s2*1.2), _v2*0.4+0.60)
+        r, g, b = int(tr*255*0.6+255*0.4), int(tg*255*0.6+255*0.4), int(tb*255*0.6+255*0.4)
+        base  = blr.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
+        frost = Image.new("RGBA", (width, bar_h), (r, g, b, int(frost_opacity*255)))
+        return Image.alpha_composite(base, frost), _h2, _s2, _v2
+
+    if style == "pure_black":
+        ink = (*_SILVER, 248)
+        arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
+        arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
+        bar_img = Image.fromarray(arr, "RGBA")
+        text_y += max(1, int(bar_h * 0.03))
+
+    elif style in ("silver", "gold"):
+        stripe = _accent_stripe
+        accent = _GOLD if style == "gold" else _SILVER
+        ink    = (*_SILVER, 248)
+        arr    = np.zeros((bar_h, width, 4), dtype=np.uint8)
+        arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
+        arr[:stripe, :, 0] = accent[0]; arr[:stripe, :, 1] = accent[1]
+        arr[:stripe, :, 2] = accent[2]; arr[:stripe, :, 3] = 240
+        bar_img = Image.fromarray(arr, "RGBA")
+        text_y += max(1, int(bar_h * 0.05)) + stripe // 2 - _lift
+
+    elif style == "rating_black":
+        stripe = _rating_stripe
+        fc  = fill_color or _SILVER
+        dim = tuple(max(0, int(c * 0.20)) for c in fc)
+        ink = (*_SILVER, 248)
+        arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
+        arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
+        # Unfilled
+        arr[:stripe, :, 0] = dim[0]; arr[:stripe, :, 1] = dim[1]
+        arr[:stripe, :, 2] = dim[2]; arr[:stripe, :, 3] = 240
+        # Filled
+        fw = int(width * _score_pct() / 100)
+        if fw > 0:
+            arr[:stripe, :fw, 0] = fc[0]; arr[:stripe, :fw, 1] = fc[1]
+            arr[:stripe, :fw, 2] = fc[2]; arr[:stripe, :fw, 3] = 240
+        bar_img = Image.fromarray(arr, "RGBA")
+        text_y += _stripe_nudge
+
+    elif style == "rating_frosted":
+        stripe = _rating_stripe
+        ink = (15, 15, 15, 248)
+        bar_img, _, _, _ = _build_frosted_base()
+        if fill_color is not None:
+            # Explicit colour chosen — use it directly.
+            fill_col = fill_color
+            dim_col  = tuple(max(0, int(c * 0.12)) for c in fill_col)
+        else:
+            # Colour Sample: derive a contrasting fill from the bar's own tint.
+            # The frosted tint's effective value ≈ _v2*0.4+0.60; if the bar is
+            # light go darker, if dark go brighter — always staying hue-matched.
+            bar_img2, _h2, _s2, _v2 = _build_frosted_base()
+            bar_img = bar_img2  # rebuild with HSV data
+            _tint_v = _v2 * 0.4 + 0.60
+            if _tint_v > 0.70:  # light bar → dark fill
+                _fv = max(0.15, _v2 * 0.30)
+            else:                # dark bar → bright fill
+                _fv = min(1.0, _v2 * 0.40 + 0.70)
+            fr2, fg2, fb2 = _cs.hsv_to_rgb(_h2, min(1.0, _s2 * 1.6), _fv)
+            fill_col = (int(fr2 * 255), int(fg2 * 255), int(fb2 * 255))
+            dim_col  = tuple(max(0, int(c * 0.12)) for c in fill_col)
+        fw = int(width * _score_pct() / 100)
+        sa = np.zeros((stripe, width, 4), dtype=np.uint8)
+        sa[:, :, 0] = dim_col[0]; sa[:, :, 1] = dim_col[1]
+        sa[:, :, 2] = dim_col[2]; sa[:, :, 3] = 90
+        if fw > 0:
+            sa[:, :fw, 0] = fill_col[0]; sa[:, :fw, 1] = fill_col[1]
+            sa[:, :fw, 2] = fill_col[2]; sa[:, :fw, 3] = 230
+        bar_img.alpha_composite(Image.fromarray(sa, "RGBA"), (0, 0))
+        text_y += _stripe_nudge
+
+    else:  # plain frosted — small nudge down, no stripe compensation needed
+        ink = (15, 15, 15, 248)
+        bar_img, _, _, _ = _build_frosted_base()
+        text_y += max(1, int(bar_h * 0.03))
 
     txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
     td        = ImageDraw.Draw(txt_layer)

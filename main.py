@@ -239,7 +239,7 @@ from quality import (
     parse_quality,
     render_badges_left,
 )
-from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar
+from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
 from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status, svg_logo_supported, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
@@ -371,13 +371,14 @@ class RequestConfig:
     minimalist_append_mode: int = 0
 
     # Frosted bar (rating_display_mode == 4)
-    bar_height_ratio:        float = 0.075
-    bar_font_size_ratio:     float = 0.58
-    bar_frost_opacity:       float = 0.50
-    bar_bottom_inset:        float = 0.009
-    bar_style:               str   = "frosted"  # "frosted" | "silver" | "gold"
+    bar_height_ratio:        float = 0.080
+    bar_font_size_ratio:     float = 0.55
+    bar_frost_opacity:       float = 0.85
+    bar_bottom_inset:        float = 0.007
+    bar_style:               str   = "frosted"  # "frosted"|"silver"|"gold"|"rating_black"|"rating_frosted"
+    bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"
     bar_score_out_of_10:     bool  = False
-    bar_show_year:           bool  = True
+    bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
 
     logo_max_w_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
@@ -567,10 +568,15 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.bar_frost_opacity       = _f("bar_frost_opacity",       cfg.bar_frost_opacity,       0.0,  1.0)
     cfg.bar_bottom_inset        = _f("bar_bottom_inset",        cfg.bar_bottom_inset,        0.0,  0.10)
     _bst = (params.get("bar_style") or "").strip().lower()
-    if _bst in ("frosted", "silver", "gold"):
+    if _bst in ("frosted", "pure_black", "silver", "gold", "rating_black", "rating_frosted"):
         cfg.bar_style = _bst
+    _bac = (params.get("bar_accent") or "").strip().lower()
+    if _bac in ("silver", "gold", "sample", "palette_0", "palette_1", "palette_2"):
+        cfg.bar_accent = _bac
     cfg.bar_score_out_of_10     = _b("bar_score_out_of_10",     cfg.bar_score_out_of_10)
-    cfg.bar_show_year           = _b("bar_show_year",           cfg.bar_show_year)
+    _bap = (params.get("bar_append") or "").strip().lower()
+    if _bap in ("rating_year", "rating", "year", "sash"):
+        cfg.bar_append = _bap
 
     cfg.logo_max_w_ratio  = _f("logo_max_w_ratio",  cfg.logo_max_w_ratio,  0.0, 1.5)
     cfg.logo_max_h_ratio  = _f("logo_max_h_ratio",  cfg.logo_max_h_ratio,  0.0, 1.0)
@@ -1144,14 +1150,17 @@ def build_poster(
                     _score_str = str(score)
             else:
                 _score_str = ""
-            _year_str = str(release_year) if (release_year and cfg.bar_show_year) else ""
-            _parts    = [p for p in [
-                _year_str,
-                genre_label or "",
-                f"★ {_score_str}" if _score_str else "",
-            ] if p]
-            # Use wider spacing when year is hidden — only one separator,
-            # so the extra room reads better with fewer elements.
+            _year_str  = str(release_year) if release_year else ""
+            _bar_sash, _ = sash_result if sash_result else (None, None)
+            if cfg.bar_append == "rating_year":
+                _parts = [_year_str, genre_label or "", f"★ {_score_str}" if _score_str else ""]
+            elif cfg.bar_append == "rating":
+                _parts = [genre_label or "", f"★ {_score_str}" if _score_str else ""]
+            elif cfg.bar_append == "year":
+                _parts = [_year_str, genre_label or ""]
+            else:  # "sash"
+                _parts = [genre_label or "", _bar_sash or ""]
+            _parts = [p for p in _parts if p]
             _sep = "  ·  " if len(_parts) <= 2 else " · "
             image = draw_frosted_bar(
                 image,
@@ -1163,6 +1172,17 @@ def build_poster(
                 frost_opacity    = cfg.bar_frost_opacity,
                 bottom_inset     = cfg.bar_bottom_inset,
                 style            = cfg.bar_style,
+                score            = score if score not in ("N/A", None) else None,
+                fill_color       = (
+                    None  # "sample" → let draw_frosted_bar derive from bar tint
+                    if cfg.bar_accent == "sample" else
+                    {"silver": (210, 210, 218), "gold": (212, 175, 55)}.get(cfg.bar_accent)
+                    or (
+                        {0: _score_color, 1: _score_color_alt, 2: _score_color_metal}
+                        .get(int(cfg.bar_accent[-1]), _score_color)(int(score))[0]
+                        if score not in ("N/A", None) else (210, 210, 218)
+                    )
+                ) if cfg.bar_style in ("rating_black", "rating_frosted") else None,
             )
 
     # --- Discovery sash / badge ---
