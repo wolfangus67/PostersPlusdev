@@ -214,6 +214,8 @@ def init_db() -> None:
         ("tmdb_status",         "TEXT"),
         ("vote_count",          "INTEGER"),
         ("text_backdrop_path",  "TEXT"),
+        ("original_poster_path","TEXT"),
+        ("poster_langs_json",   "TEXT"),
     ):
         if col not in existing_meta_cols:
             conn.execute(
@@ -802,7 +804,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    credits_json, production_cos_json,
                    runtime, number_of_seasons, number_of_episodes,
                    original_language, backdrop_path, tmdb_status, vote_count,
-                   text_backdrop_path
+                   text_backdrop_path, original_poster_path,
+                   poster_langs_json
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -817,7 +820,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             credits_json, production_cos_json,
             runtime, number_of_seasons, number_of_episodes,
             original_language, backdrop_path, tmdb_status, vote_count,
-            text_backdrop_path,
+            text_backdrop_path, original_poster_path,
+            poster_langs_json,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -847,6 +851,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "tmdb_status":          tmdb_status,
             "vote_count":           vote_count,
             "text_backdrop_path":   text_backdrop_path,
+            "original_poster_path": original_poster_path,
+            "poster_langs":         json.loads(poster_langs_json or "{}"),
         }
     except Exception as exc:
         logger.error(f"TMDB metadata cache read error: {exc}")
@@ -872,6 +878,8 @@ def set_cached_tmdb_metadata(
     tmdb_status: str | None = None,
     vote_count: int | None = None,
     text_backdrop_path: str | None = None,
+    original_poster_path: str | None = None,
+    poster_langs: dict | None = None,
 ) -> None:
     try:
         with _db_lock:
@@ -883,8 +891,9 @@ def set_cached_tmdb_metadata(
                      credits_json, production_cos_json,
                      runtime, number_of_seasons, number_of_episodes,
                      original_language, backdrop_path, tmdb_status, vote_count,
-                     text_backdrop_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     text_backdrop_path, original_poster_path,
+                     poster_langs_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -905,6 +914,8 @@ def set_cached_tmdb_metadata(
                     tmdb_status,
                     vote_count,
                     text_backdrop_path,
+                    original_poster_path,
+                    json.dumps(poster_langs or {}),
                 ),
             )
             get_db().commit()

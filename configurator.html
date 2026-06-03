@@ -1143,113 +1143,6 @@
     justify-content: flex-end;
   }
 
-  /* Per-section info button */
-  .section-info-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 13px;
-    line-height: 1;
-    padding: 2px 5px;
-    flex-shrink: 0;
-    transition: color 0.15s;
-    opacity: 0.55;
-  }
-  .section-info-btn:hover { color: var(--silver); opacity: 1; }
-
-  /* Info modal */
-  .info-modal-box {
-    background: var(--black2);
-    border: 1px solid var(--border);
-    padding: 0;
-    width: 100%;
-    max-width: 540px;
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .info-modal-header {
-    padding: 18px 24px 14px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-  }
-  .info-modal-title {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--silver);
-  }
-  .info-modal-close {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 16px;
-    line-height: 1;
-    padding: 2px 4px;
-    transition: color 0.15s;
-  }
-  .info-modal-close:hover { color: var(--text-primary); }
-  .info-modal-body {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 20px 24px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-  }
-  .info-section-title {
-    font-family: var(--mono);
-    font-size: 9px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--gold-dim);
-    margin-bottom: 8px;
-  }
-  .info-section p, .info-section li {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    line-height: 1.65;
-  }
-  .info-section ul {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .info-section li::before {
-    content: '—';
-    color: var(--text-muted);
-    margin-right: 7px;
-  }
-  .info-kv {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 4px 12px;
-  }
-  .info-kv dt {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--silver-dim);
-    white-space: nowrap;
-  }
-  .info-kv dd {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    line-height: 1.55;
-  }
-  @media (max-width: 600px) {
-    .info-modal-box { max-height: 90vh; max-width: 100%; }
-    .info-modal-body { padding: 16px 18px 20px; }
-  }
 
   .log-line {
     font-size: 9px;
@@ -1468,7 +1361,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Core Config</span>
-            <button class="section-info-btn" onclick="openInfoModal('core');event.stopPropagation()" title="About Core Config">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1529,7 +1421,7 @@
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
             <div class="field">
-              <label class="field-label">Native Logo Language</label>
+              <label class="field-label">User Native Language</label>
               <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English</option>
                 <option value="es">Spanish</option>
@@ -1573,21 +1465,21 @@
               </select>
             </div>
             <div class="field" style="margin-top:6px;">
-              <label class="field-label">Logo Priority</label>
+              <label class="field-label">Language Priority</label>
               <select id="cfg-logo-priority" onchange="build(); queuePreviewReload()">
-                <option value="native_original" selected>Native Language &gt; Original Language &gt; Text</option>
-                <option value="original_native">Original Language &gt; Native Language &gt; Text</option>
+                <option value="native_original" selected>Native &gt; Original &gt; Text</option>
+                <option value="original_native">Original &gt; Native &gt; Text</option>
                 <option value="native_text">Native Language &gt; Text</option>
               </select>
-              <div class="field-hint">Native is the language you pick, original is the source language of the content and text is plain text render.</div>
+              <div class="field-hint">Original is the source language of the content, text is plain text.</div>
             </div>
             <div class="field" style="margin-top:6px;">
               <label class="field-label">Fallback Poster Style</label>
               <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
-                <option value="minimal" selected>Minimal (textured backdrop)</option>
-                <option value="photoreal">Photorealistic</option>
+                <option value="minimal">Textured Backdrop</option>
+                <option value="photoreal" selected>Photorealistic</option>
               </select>
-              <div class="field-hint">What to show for titles with no poster art: a minimal genre-tinted textured backdrop, or photorealistic art that blends with real posters. <a href="#" onclick="openFallbackGallery(); return false;">Preview every genre</a>.</div>
+              <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Displayed if no poster can be found.</a>.</div>
             </div>
             <div class="field" style="margin-top:6px;">
               <label class="field-label">Top Vignette</label>
@@ -1607,7 +1499,7 @@
                 <option value="medium">Medium</option>
                 <option value="high" selected>High</option>
               </select>
-              <div class="field-hint">Only suggested lowering if you don't use ratings.</div>
+              <div class="field-hint">Lowering may hurt rating and logo legibility.</div>
             </div>
           </div>
         </div>
@@ -1617,7 +1509,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating / Genre Label</span>
-            <button class="section-info-btn" onclick="openInfoModal('rating');event.stopPropagation()" title="About Rating / Genre Label">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1625,7 +1516,7 @@
               <label class="field-label">Display Mode</label>
               <select id="cfg-rating-mode" onchange="updateRatingFields(); build(); queuePreviewReload()">
                 <option value="0">Hidden</option>
-                <option value="1" selected>Score Bar</option>
+                <option value="1" selected>Rating Bar</option>
                 <option value="2">Clean</option>
                 <option value="3">Minimalist</option>
                 <option value="4">Compact</option>
@@ -1706,7 +1597,7 @@
                   <option value="1">Rating</option>
                   <option value="2">Year + Rating</option>
                 </select>
-                <div class="field-hint">Segments framed by a vertical pip. Year: genre · year, rating shown only by the pip's colour (no number). Rating: genre · score. Year + Rating: genre · year · score (score printed as text; pips are silver).</div>
+                <div class="field-hint">If rating is not chosen the seperator color will give an approximation.</div>
               </div>
               <div class="field">
                 <label class="field-label">Font Size</label>
@@ -1731,7 +1622,7 @@
               </div>
             </div>
             <div id="rating-mode4-fields" style="display:none;">
-              <div class="field-hint" style="margin-bottom:10px;">All text and both dot separators take the rating-derived colour from the Colour Palette above. I recomend prestige for this mode, as the majority will be silver.</div>
+              <div class="field-hint" style="margin-bottom:10px;">Text is colored to reflect rating, I suggest prestige as the majority will be silver.</div>
               <div class="toggle-row">
                 <div>
                   <div class="toggle-label">Show Year</div>
@@ -1787,10 +1678,30 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Logo</span>
-            <button class="section-info-btn" onclick="openInfoModal('logo');event.stopPropagation()" title="About Logo">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
+            <div class="toggle-row" style="margin-bottom:14px;">
+              <div>
+                <div class="toggle-label">Original Art</div>
+                <div class="field-hint">Use original poster art rather than textless with logo overlay. I highly suggest minimal rating mode.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-original-art" onchange="updateOriginalArt(); build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <!-- Original Art source (shown only in Original Art mode) -->
+            <div class="field" id="original-art-source-field" style="display:none;">
+              <label class="field-label">Art Source</label>
+              <select id="cfg-original-art-source" onchange="build(); queuePreviewReload()">
+                <option value="primary" selected>Primary (TMDB default)</option>
+                <option value="top_rated">Top-rated (by language)</option>
+              </select>
+              <div class="field-hint">Primary is TMDB's main poster; Top-rated picks the highest-voted poster following your language order (set by Logo Priority).</div>
+            </div>
+            <!-- Logo overlay controls — N/A in Original Art mode (no logo drawn) -->
+            <div id="logo-controls">
             <div class="toggle-row" style="margin-bottom:14px;">
               <div>
                 <div class="toggle-label">Textless</div>
@@ -1821,6 +1732,7 @@
                 <span class="range-val" id="rng-lb">0.28</span>
               </div>
             </div>
+            </div>
           </div>
         </div>
 
@@ -1829,7 +1741,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Info Sash</span>
-            <button class="section-info-btn" onclick="openInfoModal('sash');event.stopPropagation()" title="About Info Sash">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1855,7 +1766,7 @@
             <div class="toggle-row" style="margin-bottom:14px;">
               <div>
                 <div class="toggle-label">Notch Badge</div>
-                <div class="field-hint">Centred notch badge instead of a diagonal sash. Adjust inset to suit your client.</div>
+                <div class="field-hint">Replace sash with a notch, adjust inset to suit your client.</div>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-sash-badge" onchange="onBadgeToggle()">
@@ -1888,7 +1799,7 @@
               </div>
               <div class="field">
                 <label class="field-label">Inset</label>
-                <div class="field-hint" style="margin-bottom:4px;">Clients crop differently — adjust as required, won't match preview.</div>
+                <div class="field-hint" style="margin-bottom:4px;">Adjust as required for your client, won't match preview.</div>
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.010" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbi">0.010</span>
@@ -1896,7 +1807,7 @@
               </div>
               <div class="field">
                 <label class="field-label">Text Vertical Offset</label>
-                <div class="field-hint" style="margin-bottom:4px;">Clients crop differently — adjust as required, won't match preview.</div>
+                <div class="field-hint" style="margin-bottom:4px;">Adjust as required for your client, tweak inset first.</div>
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-notch-offset" min="-0.5" max="0.5" step="0.01" value="0.00" oninput="updateRange(this,'rng-sbno'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbno">0.00</span>
@@ -1943,7 +1854,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Quality Badges</span>
-            <button class="section-info-btn" onclick="openInfoModal('badges');event.stopPropagation()" title="About Quality Badges">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -1962,9 +1872,6 @@
               <div class="field-hint" id="badge-mode4-hint" style="display:none">
                 Medal colored marker based on stream quality.
               </div>
-              <div class="field-hint" id="badge-quality-fetch-hint" style="display:none">
-                If media quality is un-cached, it's fetched in the background and applied for future requests.
-              </div>
               <div class="field-hint" id="aiostreams-hint" style="display:none">
                 No quality source is configured on this instance. The operator can set up AIOStreams or a Stremio scraper via environment variables.
               </div>
@@ -1980,21 +1887,23 @@
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
                   </label>
                 </div>
-                <div class="field-hint">
-                  Block the response until quality is fetched, slows down requests significantly.
-                </div>
+                <div class="field-hint" style="margin-top:4px;">By default quality is fetched in the background if uncached, this will prevent the poster rendering until it's ready.</div>
               </div>
             </div>
             <!-- All layout controls collapse when Display Mode = Hidden (mode 0). -->
             <div id="badge-layout-fields">
-              <div class="two-col">
-                <div class="field">
-                  <label class="field-label">Height (px)</label>
-                  <input type="number" id="cfg-badge-h" value="20" min="16" max="80" oninput="build(); queuePreviewReload()">
+              <div class="field">
+                <label class="field-label">Height (px)</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-badge-h" min="16" max="80" step="1" value="20" oninput="updateRange(this,'rng-bh'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bh">20</span>
                 </div>
-                <div class="field" id="badge-gap-field" style="display:none">
-                  <label class="field-label">Gap (px)</label>
-                  <input type="number" id="cfg-badge-gap" value="8" min="0" max="32" oninput="build(); queuePreviewReload()">
+              </div>
+              <div class="field" id="badge-gap-field" style="display:none">
+                <label class="field-label">Gap (px)</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-badge-gap" min="0" max="32" step="1" value="8" oninput="updateRange(this,'rng-bg'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bg">8</span>
                 </div>
               </div>
               <div class="field" style="margin-top:8px;">
@@ -2020,7 +1929,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating Weights — Movies</span>
-            <button class="section-info-btn" onclick="openInfoModal('weights');event.stopPropagation()" title="About Rating Weights">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -2038,7 +1946,6 @@
           <div class="section-header" onclick="toggleSection(this)">
             <div class="section-accent"></div>
             <span class="section-tag">Rating Weights — TV</span>
-            <button class="section-info-btn" onclick="openInfoModal('weights');event.stopPropagation()" title="About Rating Weights">ⓘ</button>
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
@@ -2148,7 +2055,7 @@ const SASH_SLOTS = [
   { id:'trending',   label:'TMDB Trending Top 40',              color:'#5aaaff' },
   { id:'cult',       label:'Cult Classic',                      color:'#5aaaff' },
   { id:'foreign',    label:'Foreign Language',                  color:'#3ab0a8' },
-  { id:'new_release', label:'New',                              color:'#e05555' },
+  { id:'new_release', label:'Newly Streaming (New)',                              color:'#e05555' },
   { id:'metacritic', label:'Metacritic Must-See',               color:'#9a9a9a' },
   { id:'true_story', label:'True Story',                        color:'#3ab0a8' },
   { id:'structural',     label:'Short / Mini / Binge',              color:'#3ab0a8' },
@@ -2403,7 +2310,6 @@ function updateBadgeModeHint() {
   const hidden = mode === 0;
   document.getElementById('badge-mode1-hint').style.display        = mode === 1 ? '' : 'none';
   document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
-  document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2 || mode === 4) ? '' : 'none';
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
   updateScraperHint();
   // Hide the whole height / horizontal / vertical block when badges are off —
@@ -2936,6 +2842,7 @@ function build() {
   if (_SHOW_URL_BOX) {
     document.getElementById('url-display-input').value = buildTemplateUrl();
   }
+  saveSettings();
   return url;
 }
 
@@ -3007,6 +2914,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
 
   // ── Logo ───────────────────────────────────────────────────────────────────
   params.set('textless',              c('tog-textless') ? 'true' : 'false');
+  params.set('use_original_art',      c('tog-original-art') ? 'true' : 'false');
+  params.set('original_art_source',   vEl('cfg-original-art-source') || 'primary');
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
   params.set('fallback_bg_style',     vEl('cfg-fallback-bg-style') || 'minimal');
@@ -3097,7 +3006,11 @@ async function copyUrl() {
 }
 
 function resetDefaults() {
-  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query']);
+  // Core Config is preserved across a Reset: API keys, language and the
+  // searched title / selection (domain is server-derived, not user-set here).
+  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query','cfg-language']);
+  // Drop any persisted settings so a later reload starts from the reset state.
+  try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
   // Reset both cfg-* (inputs / selects) AND tog-* (toggle checkboxes).  The
   // tog- prefix was previously excluded, which left toggle state surviving
   // a reset — visible regression for the Compact Show Year toggle, latent
@@ -3123,6 +3036,7 @@ function resetDefaults() {
   // dropdown reverts to its default (e.g. resetting from Compact would
   // leave the Show Year toggle on screen even though mode is now Score Bar).
   updateRatingFields();
+  updateOriginalArt();
   updateBadgeModeHint();
   updateSashBadgeFields();
   build();
@@ -3212,6 +3126,16 @@ function updateBadgeStyleFields() {
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
 }
 
+function updateOriginalArt() {
+  // In Original Art mode no logo is drawn, so its overlay controls don't apply;
+  // show the art-source picker in their place instead.
+  const on = c('tog-original-art');
+  const lc = document.getElementById('logo-controls');
+  const sf = document.getElementById('original-art-source-field');
+  if (lc) lc.style.display = on ? 'none' : '';
+  if (sf) sf.style.display = on ? '' : 'none';
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   document.getElementById('rating-mode1-fields').style.display      = mode === 1 ? '' : 'none';
@@ -3235,20 +3159,6 @@ const _INFO_TITLES = {
   badges:  'Quality Badges',
   weights: 'Rating Weights',
 };
-
-function openInfoModal(section) {
-  document.querySelectorAll('#info-modal .info-panel').forEach(p => {
-    p.style.display = p.dataset.section === section ? '' : 'none';
-  });
-  document.getElementById('info-modal-title').textContent = _INFO_TITLES[section] || 'About';
-  document.getElementById('info-modal').classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeInfoModal() {
-  document.getElementById('info-modal').classList.remove('open');
-  document.body.style.overflow = '';
-}
 
 function toggleImportBar() {
   document.getElementById('import-modal').classList.add('open');
@@ -3310,41 +3220,47 @@ function _setEl(id, value) {
   }
 }
 
-function importUrl(urlStr) {
+function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   let parsed;
   try { parsed = new URL(urlStr); } catch {
-    setLog('preview-log', 'Import failed — not a valid URL.', 'err');
+    if (!silent) setLog('preview-log', 'Import failed — not a valid URL.', 'err');
     return false;
   }
 
   // Only accept /poster paths
   if (!parsed.pathname.endsWith('/poster') && !parsed.pathname.endsWith('/poster/')) {
-    setLog('preview-log', 'Import failed — URL does not look like a poster endpoint (/poster).', 'err');
+    if (!silent) setLog('preview-log', 'Import failed — URL does not look like a poster endpoint (/poster).', 'err');
     return false;
   }
 
   const p = parsed.searchParams;
 
-  // ── Domain & auth ──────────────────────────────────────────────────────
-  document.getElementById('cfg-domain').value = parsed.origin;
-  if (p.has('access_key'))  document.getElementById('cfg-access-key').value = p.get('access_key');
+  // Domain, auth keys and media identity belong to the Core Config section and
+  // the current selection — skip them when restoring persisted *settings* so a
+  // reload never clobbers the user's saved keys / language / chosen title.
+  if (!settingsOnly) {
+    // ── Domain & auth ──────────────────────────────────────────────────────
+    document.getElementById('cfg-domain').value = parsed.origin;
+    if (p.has('access_key'))  document.getElementById('cfg-access-key').value = p.get('access_key');
 
-  // Only import API keys if they are real values (not placeholder tokens)
-  const tmdbKey  = p.get('tmdb_key')    || '';
-  const mdbKey   = p.get('mdblist_key') || '';
-  if (tmdbKey  && !tmdbKey.startsWith('{'))  document.getElementById('cfg-tmdb-key').value    = tmdbKey;
-  if (mdbKey   && !mdbKey.startsWith('{'))   document.getElementById('cfg-mdblist-key').value = mdbKey;
+    // Only import API keys if they are real values (not placeholder tokens)
+    const tmdbKey  = p.get('tmdb_key')    || '';
+    const mdbKey   = p.get('mdblist_key') || '';
+    if (tmdbKey  && !tmdbKey.startsWith('{'))  document.getElementById('cfg-tmdb-key').value    = tmdbKey;
+    if (mdbKey   && !mdbKey.startsWith('{'))   document.getElementById('cfg-mdblist-key').value = mdbKey;
 
-  // ── Media identity (skip template placeholders) ────────────────────────
-  const rawTmdb = p.get('tmdb_id') || '';
-  const rawImdb = p.get('imdb_id') || '';
-  const rawType = p.get('type')    || '';
-  if (rawTmdb && !rawTmdb.startsWith('{')) resolvedTmdbId = rawTmdb;
-  if (rawImdb && !rawImdb.startsWith('{')) resolvedImdbId = rawImdb;
-  if (rawType && !rawType.startsWith('{')) mediaType      = rawType;
+    // ── Media identity (skip template placeholders) ────────────────────────
+    const rawTmdb = p.get('tmdb_id') || '';
+    const rawImdb = p.get('imdb_id') || '';
+    const rawType = p.get('type')    || '';
+    if (rawTmdb && !rawTmdb.startsWith('{')) resolvedTmdbId = rawTmdb;
+    if (rawImdb && !rawImdb.startsWith('{')) resolvedImdbId = rawImdb;
+    if (rawType && !rawType.startsWith('{')) mediaType      = rawType;
+  }
 
   // ── Logo language ───────────────────────────────────────────────────────
-  if (p.has('logo_language'))        _setEl('cfg-language',             p.get('logo_language'));
+  // Language is Core Config — only restored on an explicit URL import.
+  if (!settingsOnly && p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
   if (p.has('logo_priority')) {
     _setEl('cfg-logo-priority', p.get('logo_priority'));
   } else if (p.has('logo_native_fallback')) {
@@ -3416,12 +3332,15 @@ function importUrl(urlStr) {
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));
   if (p.has('score_color_mode'))               _setEl('cfg-score-color-mode', p.get('score_color_mode'));
   updateRatingFields();
+  updateOriginalArt();
 
   // ── Logo ────────────────────────────────────────────────────────────────
   if (p.has('logo_max_w_ratio'))   _setEl('cfg-logo-w',      p.get('logo_max_w_ratio'));
   if (p.has('logo_max_h_ratio'))   _setEl('cfg-logo-h',      p.get('logo_max_h_ratio'));
   if (p.has('logo_bottom_ratio'))  _setEl('cfg-logo-bottom', p.get('logo_bottom_ratio'));
   if (p.has('textless'))           _setEl('tog-textless',    p.get('textless'));
+  if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
+  if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
@@ -3449,11 +3368,44 @@ function importUrl(urlStr) {
   applyWeights('tv_weights',    'tv-weights',    TV_SOURCES);
 
   // ── Persist API keys and rebuild ────────────────────────────────────────
-  saveApiKeys();
+  if (!settingsOnly) saveApiKeys();
   build();
   queuePreviewReload();
-  setLog('preview-log', 'Settings imported from URL.', 'ok');
+  if (!silent) setLog('preview-log', 'Settings imported from URL.', 'ok');
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Settings persistence (full configurator state across reloads)
+// ---------------------------------------------------------------------------
+// We round-trip through the same URL param schema importUrl already understands
+// so every control — including weights and sash order — is covered for free.
+// Core Config (API keys, language, searched title/selection) is persisted
+// separately and deliberately excluded here so Reset can clear settings without
+// disturbing it.
+const SETTINGS_KEY  = 'postersplus_settings';
+const _CORE_PARAMS  = ['tmdb_id','imdb_id','type','access_key','tmdb_key','mdblist_key','logo_language'];
+let   _settingsReady = false;   // gate saves until the initial hydrate finishes
+
+function saveSettings() {
+  if (!_settingsReady) return;
+  try {
+    const full = buildBaseParams({ usePlaceholders: true });
+    const qIdx = full.indexOf('?');
+    if (qIdx < 0) return;
+    const p = new URLSearchParams(full.slice(qIdx + 1));
+    _CORE_PARAMS.forEach(k => p.delete(k));
+    localStorage.setItem(SETTINGS_KEY, p.toString());
+  } catch (e) { /* storage disabled / quota — non-fatal */ }
+}
+
+function restoreSettings() {
+  let raw;
+  try { raw = localStorage.getItem(SETTINGS_KEY); } catch { return; }
+  if (!raw) return;
+  // window.location.origin is only a placeholder base so `new URL` parses; with
+  // settingsOnly the domain is never written back to the form.
+  importUrl(`${window.location.origin}/poster?${raw}`, { silent: true, settingsOnly: true });
 }
 
 // Override any browser-side form-state restoration that would otherwise
@@ -3497,12 +3449,18 @@ loadSashOrder();
 buildSashList();
 hydrateFromLocalStorage();
 if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
+// Re-apply the user's persisted settings on top of the freshly-reset defaults
+// (Core Config — keys / language / selection — is left untouched).
+restoreSettings();
 updateRatingFields();
+updateOriginalArt();
 updateBadgeModeHint();
 updateSashBadgeFields();
 _initRangeValEditing();
 checkWhatsNew();
 build();
+// Hydrate is complete — from here on every build() persists settings.
+_settingsReady = true;
 
 fetchServerCaps().then(() => { queuePreviewReload(); });
 
@@ -3565,177 +3523,11 @@ initCustomMobileSliders();
 });
 </script>
 
-<div class="import-modal" id="info-modal" onclick="if(event.target===this)closeInfoModal()">
-  <div class="info-modal-box">
-    <div class="info-modal-header">
-      <span class="info-modal-title" id="info-modal-title">About</span>
-      <button class="info-modal-close" onclick="closeInfoModal()" aria-label="Close">✕</button>
-    </div>
-    <div class="info-modal-body">
-
-      <!-- CORE CONFIG -->
-      <div class="info-panel" data-section="core">
-        <div class="info-section">
-          <dl class="info-kv">
-            <dt>Search</dt>       <dd>Type in the name of any movie or show and see how it'll look. Be warned that clients use various sizes and rounding, you may have to tweak to your own client.</dd>
-            <dt>TMDB Key</dt>     <dd>Required for poster art, logos, and metadata. If the server host has set this, you don't need it.</dd>
-            <dt>MDBlist Key</dt>  <dd>Required for ratings, awards, and keyword data. If the server host has set this you don't need it.</dd>
-            <dt>Native Logo Language</dt>    <dd>The language Posters+ requests title logos in. If it's unavailable it falls back to English.</dd>
-            <dt>Logo Priority</dt>    <dd>Order logos are picked in. "Native" is your Native Logo Language above; "Original" is the content's own language (e.g. Japanese for anime); "Text" renders the translated title as text. Choose whether your language or the content's original language wins, or restrict to your language only.</dd>
-            <dt>Top Vignette</dt><dd>A dark fade across the top of the poster that keeps badges and age ratings readable over bright art. Four levels: Off / Low (subtle), Medium (balanced), High (strongest — the legacy look). Lower presets work better on art that's already dark up top.</dd>
-            <dt>Bottom Vignette</dt><dd>Same four-level scale as the Top Vignette but for the bottom of the poster. Mainly useful if you've hidden the rating label and don't need the dark fade behind it — drop to Low or Off to let the art breathe. Use High (default) or Medium when you have a Score Bar / Clean / Minimalist / Compact label down there.</dd>
-          </dl>
-        </div>
-      </div>
-
-      <!-- RATING / GENRE LABEL -->
-      <div class="info-panel" data-section="rating" style="display:none">
-        <div class="info-section">
-          <div class="info-section-title">Display Modes</div>
-          <dl class="info-kv">
-            <dt>None</dt>        <dd>Clean art, no score overlay. Best for a purely textless aesthetic.</dd>
-            <dt>Score Bar</dt>   <dd>Horizontal gradient bar with a percentage fill based on the rating. Under 50, 50 to 69, 70 to 84 and 85+ are the color tiers. Six band uses six tiers, instead.</dd>
-            <dt>Clean</dt>     <dd>Genre ★ score as centred text near the bottom. Omits year and the score bar.</dd>
-            <dt>Minimalist</dt>  <dd>Small render in the bottom right, the score seperator uses the same mechanics as score bar as a solid color rather than fill. The bottom vignette is also intentionally weaker in this mode.</dd>
-            <dt>Compact</dt>     <dd>"All info in one strip" — Genre · Year · Info sash text, centred near the bottom. The whole line (text and both dot separators) is painted in the rating-derived colour from the chosen palette, so the line itself doubles as the score signal. Falls back to silver if no rating is available. Toggle Show Year off if you'd rather drop the year and use the freed-up space for a larger font. Compact never disables other layers — keep the diagonal sash or quality badges too if you want.</dd>
-          </dl>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Score Colour Palettes</div>
-          <dl class="info-kv">
-            <dt>Light</dt>   <dd>Designed to only use the brighest versions of each color, for "at a glance" ratings.</dd>
-            <dt>Dark/light</dt>  <dd>Dark red, red, amber, yellow, dark green, bright green to stick with easy to understand colors.</dd>
-            <dt>Prestige</dt>  <dd>Focuses on the bronze, silver and gold color scheme used throughout Posters+.</dd>
-          </dl>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Glow &amp; Layout</div>
-          <ul>
-            <li>Threshold determines when glow activates, blur increases the radius and alpha increases the brightness.</li>
-            <li>Font size and vertical position are intended for customization across many clients.</li>
-            <li>In Minimalist mode, horizontal offset moves the pip away from the edge to improve client compatibility.</li>
-          </ul>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Preservation Mode</div>
-          <p>If you want to leave as much of the original art untouched as possible, combine:</p>
-          <ul>
-            <li>Rating display → <strong style="color:var(--silver-dim)">Compact</strong> (small single line at the bottom, score-coloured)</li>
-            <li>Core Config → Top Vignette → <strong style="color:var(--silver-dim)">Off</strong> or <strong style="color:var(--silver-dim)">Low</strong></li>
-            <li>Quality Badges → <strong style="color:var(--silver-dim)">Hidden</strong> (or stick with Quality Notch for a small accent)</li>
-          </ul>
-          <p style="margin-top:6px">This is the most art-respecting configuration — no top-corner overlays, no top fade, just a small text strip at the bottom that doubles as the rating signal via colour.</p>
-        </div>
-      </div>
-
-      <!-- LOGO -->
-      <div class="info-panel" data-section="logo" style="display:none">
-        <div class="info-section">
-          <div class="info-section-title">Textless Mode</div>
-          <ul>
-            <li><strong style="color:var(--silver-dim)">Textless</strong> — skips rendering the logo on the textless poster, use if you want to use your clients title display below the poster.</li>
-            <li>If no textless poster exists, the server falls back to cropping the title's landscape backdrop into a portrait frame. If neither exists, we fallback to the original art. If there's no art at all, a genre-tinted dark canvas is used to avoid 404.</li>
-          </ul>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Logo Sizing &amp; Position</div>
-          <dl class="info-kv">
-            <dt>Max width</dt>   <dd>Logo is scaled so it never exceeds this fraction of the poster width.</dd>
-            <dt>Max height</dt>  <dd>Logo is scaled so it never exceeds this fraction of the poster height. Both constraints apply simultaneously — whichever is tighter wins.</dd>
-            <dt>Bottom ratio</dt><dd>Distance from the bottom edge as a fraction of poster height. Higher value moves the logo further up.</dd>
-          </dl>
-        </div>
-      </div>
-
-      <!-- INFO SASH -->
-      <div class="info-panel" data-section="sash" style="display:none">
-        <div class="info-section">
-          <div class="info-section-title">Sashes</div>
-          <ul>
-            <li>Award wins and nominations will only show best picture, outstanding drama/comedy/limited series, and the five main Golden Globes to avoid spam.</li>
-            <li>Film festivals cover (Cannes, Sundance, Venice) and many more.</li>
-            <li>Trending on TMDB is refreshed daily and uses the US top 40. </li>
-            <li>Cult classic status and true story use Mdblist keywords.</li>
-            <li>Highlighted studios, directors and cast are based on your instance operators settings.</li>
-            <li>Newly streaming pulls from both official digital release dates and Reddit.</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- QUALITY BADGES -->
-      <div class="info-panel" data-section="badges" style="display:none">
-        <div class="info-section">
-          <div class="info-section-title">Display Modes</div>
-          <dl class="info-kv">
-            <dt>None</dt>         <dd>No badge. Cleanest look, no AIOStreams dependency.</dd>
-            <dt>Quality + Age</dt><dd>Colors the age rating based on quality. Uses a six point scoring system, 1080p, WebDL, HDR are 1. 4K, Remux, DV or HDR10+ are 2. Requires 2/4/6 for each tier.</dd>
-            <dt>Badge Row</dt>    <dd>PNG icon badges for format, badges are three categories: 1080p/4K, Web/Remux, HDR/DV/HDR10+</dd>
-            <dt>Age Only</dt>     <dd>Content-rating pill only — no quality dependency, works without AIOStreams.</dd>
-            <dt>Quality Notch</dt>  <dd>Very minimal accent notch, follows the same scoring system as quality + age.</dd>
-          </dl>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Sizing &amp; Positioning</div>
-          <ul>
-            <li>Height sets badge image size in pixels. Mode 2 (Badge Row) defaults to 32px; other modes to 36px; Tier Accent to 20px.</li>
-            <li>Gap controls horizontal spacing between badges in Badge Row mode.</li>
-            <li>Anchor X / Y shift the badge cluster relative to the top-left corner of the poster.</li>
-            <li>Quality data is fetched from AIOStreams in the background on first request — the first render may show no badges while the cache warms. Subsequent requests will include badges.</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- RATING WEIGHTS -->
-      <div class="info-panel" data-section="weights" style="display:none">
-        <div class="info-section">
-          <div class="info-section-title">How Weights Work</div>
-          <ul>
-            <li>Each slider sets the contribution of that source's score to the final weighted average.</li>
-            <li>Set a source to 0 to exclude it entirely — it won't be used even if data exists.</li>
-            <li>Sources with no data for a title are skipped automatically; the remaining sources are re-weighted.</li>
-            <li>Weights don't need to sum to 1 — they are normalised before computing the score.</li>
-          </ul>
-        </div>
-        <div class="info-section" style="margin-top:16px">
-          <div class="info-section-title">Source Notes</div>
-          <dl class="info-kv">
-            <dt>Letterboxd</dt>    <dd>Default strongest signal for film; community-curated, skews cinephile.</dd>
-            <dt>Trakt</dt>         <dd>Default strongest signal for TV; broad audience with good coverage of streaming originals.</dd>
-            <dt>RT Critic</dt>     <dd>Rotten Tomatoes critic score, tends to have high scores as they use pass/fail rather than numeric.</dd>
-            <dt>RT User</dt>       <dd>RT audience score, often diverges from critics.</dd>
-            <dt>IMDb</dt>          <dd>Wery wide coverage but can be skewed on polarising titles.</dd>
-            <dt>TMDB</dt>          <dd>Very wide coverage, fairly safe option.</dd>
-            <dt>Metacritic</dt>    <dd>Critic aggregate, below average coverage and skews lower scores.</dd>
-            <dt>Roger Ebert</dt>   <dd>Lowest coverage, as it's one singular review you can see scores of 100 here.</dd>
-            <dt>MyAnimeList</dt>   <dd>Anime only. Anime fans can set to 99% and set their movie/TV providers to around 1-2% and it'll normalize accordingly </dd>
-          </dl>
-          <p style="margin-top:8px">All data is fetched via MDBlist — an MDBlist API key is required for scores to appear.</p>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
-  <div class="import-modal-box">
-    <div class="import-modal-title">Import URL</div>
-    <input type="text" id="import-input" class="import-input"
-      placeholder="Paste a Posters+ link to import config"
-      onkeydown="if(event.key==='Enter'){ applyImport(); event.preventDefault(); } else if(event.key==='Escape'){ closeImportModal(); event.preventDefault(); }">
-    <div class="import-modal-btns">
-      <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="applyImport()">Apply</button>
-    </div>
-  </div>
-</div>
-
 <div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
   <div class="import-modal-box">
     <div class="import-modal-title">What's new in v1.0.0</div>
     <ul class="whatsnew-list">
       <li>Info Sash badge style — rounded rectangle alternative to the diagonal sash, with adjustable X/Y position</li>
-      <li>Per-section ⓘ info modals throughout the configurator</li>
       <li>Golden Globe wins and nominations now have their own dedicated sash slots</li>
       <li>Backdrop fallback — TMDB landscape backdrop is cropped to portrait when no textless poster (or no poster at all) is available</li>
       <li>Genre-tinted fallback canvas — atmospheric colour matched to genre when no art exists</li>

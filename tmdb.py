@@ -245,7 +245,10 @@ async def fetch_poster_metadata(
         (genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data)
     """
     endpoint = "tv" if media_type in ("tv", "series") else "movie"
-    metadata_cache_key = f"{endpoint}_{tmdb_id}"
+    # Key by logo_language too: the images fetched (logos + posters) depend on it,
+    # so a title cached under one language must not be served to another without
+    # that language's art.  Each language gets its own correctly-fetched entry.
+    metadata_cache_key = f"{endpoint}_{tmdb_id}_{logo_language}"
 
     meta = get_cached_tmdb_metadata(metadata_cache_key)
 
@@ -261,6 +264,8 @@ async def fetch_poster_metadata(
             "tmdb_status":           meta.get("tmdb_status"),
             "vote_count":            meta.get("vote_count"),
             "text_backdrop_path":    meta.get("text_backdrop_path"),
+            "original_poster_path":  meta.get("original_poster_path"),
+            "poster_langs":          meta.get("poster_langs", {}),
         }
         return (
             meta["genre_ids"],
@@ -326,6 +331,11 @@ async def fetch_poster_metadata(
         is_textless = False  # no art, no point fetching logos
         # poster_path stays None; get_poster will generate a fallback canvas
 
+    # TMDB's primary poster (title/logo baked into the art).  Captured separately
+    # from the textless selection above so "original art" mode can serve it as-is
+    # — skipping our own logo — even when a textless poster also exists.
+    original_poster_path = data.get("poster_path")
+
     # Best backdrop — only consider null/unspecified language entries, which are
     # the ones TMDB marks as language-neutral (almost always textless).
     # Backdrops with an explicit language tag frequently have title text burned in,
@@ -364,15 +374,20 @@ async def fetch_poster_metadata(
     # won't return native-language logos.  Do a cheap supplemental /images call
     # so we can cache those logos alongside the rest.  Skipped when the original
     # language is already covered by _img_langs (en or user's logo_language).
+    # Fire when the original-language logos OR posters aren't already covered —
+    # original-art mode needs the original-language poster (e.g. the Spanish
+    # poster for a Spanish film) to honour poster-language priority.
     _covered = {logo_language, "en"}
+    _have_orig_logos   = any(lg.get("iso_639_1") == original_language for lg in logos)
+    _have_orig_posters = any(p.get("iso_639_1")  == original_language for p in posters)
     if (
         original_language
         and original_language not in _covered
-        and not any(lg.get("iso_639_1") == original_language for lg in logos)
+        and not (_have_orig_logos and _have_orig_posters)
     ):
         try:
             logger.info(
-                f"Fetching supplemental {original_language} logos for {tmdb_id}"
+                f"Fetching supplemental {original_language} images for {tmdb_id}"
             )
             supp = await client.get(
                 f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/images",
@@ -382,13 +397,32 @@ async def fetch_poster_metadata(
                 },
             )
             if supp.status_code == 200:
-                supp_logos = supp.json().get("logos", [])
-                logos = logos + supp_logos
+                _supp = supp.json()
+                supp_logos   = _supp.get("logos", [])
+                supp_posters = _supp.get("posters", [])
+                logos   = logos + supp_logos
+                posters = posters + supp_posters
                 logger.info(
-                    f"Added {len(supp_logos)} {original_language} logo(s) for {tmdb_id}"
+                    f"Added {len(supp_logos)} {original_language} logo(s) and "
+                    f"{len(supp_posters)} poster(s) for {tmdb_id}"
                 )
         except Exception as exc:
-            logger.warning(f"Supplemental logo fetch failed for {tmdb_id}: {exc}")
+            logger.warning(f"Supplemental image fetch failed for {tmdb_id}: {exc}")
+
+    # Original-art mode picks a TEXTUAL poster by language at RENDER time (so it
+    # honours the request's native language, not the fetch-time one).  Store the
+    # best language-tagged poster per language here — keyed iso_639_1 → file_path,
+    # excluding null/"" (textless).  (Computed after the supplemental fetch.)
+    poster_langs: dict[str, str] = {}
+    _poster_best_vote: dict[str, float] = {}
+    for _p in posters:
+        _pl = _p.get("iso_639_1")
+        if not _pl:
+            continue
+        _pv = _p.get("vote_average") or 0
+        if _pl not in poster_langs or _pv > _poster_best_vote[_pl]:
+            poster_langs[_pl] = _p["file_path"]
+            _poster_best_vote[_pl] = _pv
 
     set_cached_tmdb_metadata(
         metadata_cache_key,
@@ -408,6 +442,8 @@ async def fetch_poster_metadata(
         tmdb_status=tmdb_status,
         vote_count=vote_count,
         text_backdrop_path=text_backdrop_path,
+        original_poster_path=original_poster_path,
+        poster_langs=poster_langs,
     )
 
     tmdb_data = {
@@ -420,6 +456,8 @@ async def fetch_poster_metadata(
         "tmdb_status":          tmdb_status,
         "vote_count":           vote_count,
         "text_backdrop_path":   text_backdrop_path,
+        "original_poster_path": original_poster_path,
+        "poster_langs":         poster_langs,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data

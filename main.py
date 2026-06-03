@@ -402,6 +402,14 @@ class RequestConfig:
     # backdrop) or "photoreal" (hand-made photographic art that blends with real
     # posters).  Missing photoreal art degrades to the minimal set.
     fallback_bg_style: str = "minimal"
+    # Original-art mode: serve TMDB's primary poster (title/logo baked into the
+    # art) as-is, skipping our own logo overlay, text detection and the textless/
+    # backdrop fallbacks.  The logo is part of the art in this mode.
+    use_original_art: bool = False
+    # Which poster original-art mode serves:
+    #   "primary"   = TMDB's designated default poster (most recognisable)
+    #   "top_rated" = highest-voted poster, by logo_priority language order
+    original_art_source: str = "primary"
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
     muted: bool = False
     textless: bool = False
@@ -584,6 +592,10 @@ def build_request_config(params: dict) -> RequestConfig:
     _fbs = (params.get("fallback_bg_style") or "").strip().lower()
     if _fbs in ("minimal", "photoreal"):
         cfg.fallback_bg_style = _fbs
+    cfg.use_original_art      = _b("use_original_art", cfg.use_original_art)
+    _oas = (params.get("original_art_source") or "").strip().lower()
+    if _oas in ("primary", "top_rated"):
+        cfg.original_art_source = _oas
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
 
     return cfg
@@ -1058,53 +1070,62 @@ def build_poster(
             right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
             _ink = (235, 235, 235, 255)
 
-            # Text segments framed by vertical pips (the pip frames better than a
-            # "|" glyph).  Mode 0 ("Year") shows the rating ONLY via a pip coloured
-            # by score (genre · year); modes 1/2 print the score as text and use a
-            # neutral silver pip purely as a separator.
+            # Segments, each tagged with the SEPARATOR that precedes it:
+            #   "pip"  — silver vertical pip (before the year)
+            #   "star" — ★ glyph (before the rating/score)
+            #   "rpip" — pip COLOURED by score (mode 0 only: the rating shown
+            #            purely by colour, no number)
+            # Mode 0 ("Year"): genre [rating-pip] year
+            # Mode 1 ("Rating"): genre ★ score
+            # Mode 2 ("Year + Rating"): genre [pip] year ★ score
             _has_score = score not in ("N/A", None)
+            parts = [(genre_label, None)]   # (text, separator_before)
             if cfg.minimalist_append_mode == 0:
-                segments    = [genre_label] + ([str(release_year)] if release_year else [])
-                _pip_silver = False
+                if release_year:
+                    parts.append((str(release_year), "rpip"))
             elif cfg.minimalist_append_mode == 1:
-                segments    = [genre_label] + ([str(score)] if _has_score else [])
-                _pip_silver = True
+                if _has_score:
+                    parts.append((str(score), "star"))
             else:  # 2 — Year + Rating
-                segments = ([genre_label]
-                            + ([str(release_year)] if release_year else [])
-                            + ([str(score)] if _has_score else []))
-                _pip_silver = True
+                if release_year:
+                    parts.append((str(release_year), "pip"))
+                if _has_score:
+                    parts.append((str(score), "star"))
 
             pip_gap = int(font_size * 0.55)
             pip_w   = max(4, int(font_size * 0.18))
             pip_h   = int(font_size * 1.4)
             pip_cy  = round(y + font_size * 0.60)
+            star_w  = draw.textlength("★", font=font_meta)
 
-            # Lay out right-to-left: each text segment, with a pip between pairs.
-            cursor   = right_edge
-            text_ops = []   # (x, segment)
-            pip_xs   = []
-            for i in range(len(segments) - 1, -1, -1):
-                seg   = segments[i]
+            # Lay out right-to-left: each segment, with its separator to its left.
+            cursor = right_edge
+            ops    = []   # (kind, x[, text]); kind in text|pip|rpip|star
+            for i in range(len(parts) - 1, -1, -1):
+                seg, sep = parts[i]
                 seg_x = cursor - draw.textlength(seg, font=font_meta)
-                text_ops.append((seg_x, seg))
+                ops.append(("text", seg_x, seg))
                 cursor = seg_x
-                if i > 0:                      # a segment sits to the left → pip
+                if sep:
                     cursor -= pip_gap
-                    pip_x  = cursor - pip_w
-                    pip_xs.append(pip_x)
-                    cursor = pip_x - pip_gap
+                    sep_w  = star_w if sep == "star" else pip_w
+                    sep_x  = cursor - sep_w
+                    ops.append((sep, sep_x))
+                    cursor = sep_x - pip_gap
 
-            for sx, seg in text_ops:
-                draw.text((sx, y), seg, font=font_meta, fill=_ink)
-            for px in pip_xs:
-                if _pip_silver:
-                    _draw_solid_pip(image, x=px, y_center=pip_cy,
-                                    width=pip_w, height=pip_h, color=(192, 192, 200))
-                else:
-                    draw_score_bar_vertical(image, score, x=px, y_center=pip_cy,
+            for op in ops:
+                kind, ox = op[0], op[1]
+                if kind == "text":
+                    draw.text((ox, y), op[2], font=font_meta, fill=_ink)
+                elif kind == "star":
+                    draw.text((ox, y), "★", font=font_meta, fill=_ink)
+                elif kind == "rpip":
+                    draw_score_bar_vertical(image, score, x=ox, y_center=pip_cy,
                                             height=pip_h, width=pip_w,
                                             color_mode=cfg.score_color_mode)
+                else:  # "pip"
+                    _draw_solid_pip(image, x=ox, y_center=pip_cy,
+                                    width=pip_w, height=pip_h, color=(192, 192, 200))
 
         elif cfg.rating_display_mode == 4:
             # Compact — Genre · Year · Sash text, centred.  Reads the sash
@@ -1952,6 +1973,53 @@ async def get_poster(
             logger.info(f"No textless poster for {tmdb_id} — using backdrop crop as portrait fallback")
             is_textless = True          # backdrop is textless; enable logo compositing
 
+        # Original-art mode: serve a TMDB poster (title baked into the art) as-is.
+        # Override the textless/backdrop selection, force is_textless=False so the
+        # existing gates skip our logo, text detection and the backdrop rescue.
+        # Poster language reuses logo_priority (there's no text fallback here):
+        #   original_native → content's original-language poster first
+        #   native_original / native_text → viewer-language poster first
+        # "native" is the REQUEST's logo_language (selected from poster_langs at
+        # render time, so it isn't baked to whatever language first cached this
+        # title).  Both fall back to the primary poster; off if none exist.
+        _plangs    = tmdb_data.get("poster_langs") or {}
+        _p_native  = _plangs.get(rcfg.logo_language)
+        _p_orig    = _plangs.get(tmdb_data.get("original_language"))
+        _p_default = tmdb_data.get("original_poster_path")
+        # Determine the priority-first language so we know what "output language"
+        # the user is targeting.
+        _original_lang = tmdb_data.get("original_language") or ""
+        if rcfg.logo_priority == "original_native":
+            _priority_lang = _original_lang
+        else:  # native_original / native_text
+            _priority_lang = rcfg.logo_language or ""
+        # art_source only matters when the priority-first language is English —
+        # the two TMDB English poster candidates (editorial primary vs
+        # community top-rated) can differ meaningfully.  For non-English
+        # priority languages TMDB has no separate "primary" concept so we
+        # always use the vote-ranked poster regardless of art_source.
+        _use_primary = (
+            _priority_lang == "en"
+            and rcfg.original_art_source == "primary"
+        )
+        if rcfg.logo_priority == "original_native":
+            if _use_primary:
+                _orig_art = _p_default or _p_orig or _p_native
+            else:
+                _orig_art = _p_orig or _p_native or _p_default
+        else:  # native_original / native_text
+            if _use_primary:
+                _orig_art = _p_default or _p_native or _p_orig
+            else:
+                _orig_art = _p_native or _p_orig or _p_default
+        _use_original_art = rcfg.use_original_art and bool(_orig_art)
+        if _use_original_art:
+            poster_path   = _orig_art
+            is_textless   = False
+            _use_backdrop = False
+            logger.info(f"Original-art mode for {tmdb_id} — poster {poster_path} "
+                        f"(priority={rcfg.logo_priority})")
+
         if rating_already_cached or not effective_mdblist_key:
             rating_coro = _resolved(
                 (cached_ratings_dict, cached_genre, cached_release_date, [], cached_age_rating)
@@ -1999,6 +2067,7 @@ async def get_poster(
             _rescued = None
             _tbp = tmdb_data.get("text_backdrop_path")
             if (_cfg.TEXTLESS_TEXT_DETECTION and not is_textless and _tbp
+                    and not _use_original_art
                     and _detection_vote_ok(tmdb_data.get("vote_count"))):
                 try:
                     _cand = await fetch_backdrop_image(client, tmdb_id, _tbp, avoid_text=True)
@@ -2410,9 +2479,10 @@ async def get_poster(
         status = exc.response.status_code
         if status == 404:
             # TMDB returned metadata with a poster/image path that no longer exists.
-            # Invalidate the metadata cache so the next request re-fetches fresh data.
+            # Invalidate the (per-language) metadata cache so the next request
+            # re-fetches fresh data.
             _endpoint = "tv" if type in ("tv", "series") else "movie"
-            delete_cached_tmdb_metadata(f"{_endpoint}_{tmdb_id}")
+            delete_cached_tmdb_metadata(f"{_endpoint}_{tmdb_id}_{rcfg.logo_language}")
             logger.warning(
                 f"TMDB image 404 for tmdb_id={tmdb_id} — metadata cache invalidated, "
                 f"will self-heal on next request"
