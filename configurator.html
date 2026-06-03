@@ -3523,6 +3523,17 @@ initCustomMobileSliders();
 });
 </script>
 
+<div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
+  <div class="import-modal-box">
+    <div class="import-modal-title">Import URL</div>
+    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
+    <div class="import-modal-btns">
+      <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyImport()">Import</button>
+    </div>
+  </div>
+</div>
+
 <div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
   <div class="import-modal-box">
     <div class="import-modal-title">What's new in v1.0.0</div>
