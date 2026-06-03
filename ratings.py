@@ -323,9 +323,8 @@ def _draw_solid_pip(
 ) -> None:
     """Draw a single solid-colour cairo-antialiased pill pip onto *image*.
 
-    Shared primitive used by both score-driven pips (where the caller computes
-    the colour from the score palette) and decoration pips in compact mode
-    (where the colour comes from a tier / sash palette).
+    Shared primitive used by score-driven pips (where the caller computes
+    the colour from the score palette).
     """
     y0     = int(y_center - height / 2)
     radius = max(1, width // 2)
@@ -363,150 +362,87 @@ def draw_score_bar_vertical(
 
 
 # ---------------------------------------------------------------------------
-# Compact label  (rating_display_mode == 4)
+# Frosted bar (rating_display_mode == 4)
 # ---------------------------------------------------------------------------
-# Single bottom-centre line that crams genre, year and the info-sash text into
-# one strip joined by middle-dot separators:
-#
-#     Genre · Year · Sash text
-#
-# Every glyph (text + both dots) is painted with one colour derived from the
-# score palette, so the whole line acts as a single "this is good / bad" cue
-# at a glance.  Falls back to silver if no score is available.
-#
-# Additive: this mode doesn't disable the diagonal sash or quality badges; if
-# both are wanted, both render.
 
-# Neutral fallbacks for the compact line when there's no usable score.
-#
-# Silver works as a "no info" colour for the Light (0) and Dark-light (1)
-# palettes because neither palette actually uses silver as a tier.
-#
-# Prestige (2) does — silver IS its 70-84 tier — so falling back to silver
-# there would falsely signal "this is a silver-tier title".  Prestige uses
-# the same grey its <50 tier uses, so an unrated title visually groups with
-# bottom-tier scores rather than mid-tier ones.  Worse to over-promise than
-# under-promise on an unknown.
-_COMPACT_SILVER         = (235, 235, 235)
-_COMPACT_PRESTIGE_GREY  = (140, 140, 148)  # matches _score_color_metal's <50 tier
-
-
-def _compact_no_score_color(score_color_mode: int) -> tuple[int, int, int]:
-    return _COMPACT_PRESTIGE_GREY if score_color_mode == 2 else _COMPACT_SILVER
-
-
-def _compact_palette_color(
-    score: int | str,
-    score_color_mode: int,
-) -> tuple[int, int, int]:
-    """Resolve the score-palette colour for the compact line.
-
-    Returns a palette-aware no-score fallback when the score is missing or
-    non-numeric so the line still renders (just without the rating-quality
-    cue) — see _compact_no_score_color for the per-palette choice."""
-    if score in ("N/A", None, ""):
-        return _compact_no_score_color(score_color_mode)
-    try:
-        s = max(0, min(int(score), 100))
-    except (ValueError, TypeError):
-        return _compact_no_score_color(score_color_mode)
-    color_fn = {1: _score_color_alt, 2: _score_color_metal}.get(
-        score_color_mode, _score_color
-    )
-    left_color, _ = color_fn(s)
-    return left_color
-
-
-def draw_compact_label(
+def draw_frosted_bar(
     image: Image.Image,
-    *,
-    genre: str,
-    year: str | int | None,
-    score: int | str,
-    sash_label: str | None = None,
-    sash_type: str | None = None,
-    font_size_ratio: float = 0.055,
-    y_offset: float = 0.92,
-    score_color_mode: int = 0,
-    show_year: bool = True,
-    font_path: str | None = None,
-) -> None:
-    """Render the compact bottom-centre line:  Genre · Year · Sash text.
+    left_text: str,
+    center_text: str,
+    right_text: str,
+    bar_height_ratio: float = 0.090,
+    font_size_ratio: float = 0.40,
+    frost_opacity: float = 0.75,
+    bottom_inset: float = 0.0,
+) -> Image.Image:
+    """Full-width frosted glass strip near the bottom of the poster.
 
-    Separators inherit the line's colour for free (single draw.text call) so
-    nothing has to be coloured manually.
-
-    Winner / nominee disambiguation
-    -------------------------------
-    When sash_type == "win" the separator immediately before the sash text
-    becomes "★" instead of "·".  Award winners and nominees often share the
-    same label string ("Best Picture", "Golden Globe") — in sash / badge
-    modes their colours distinguish them, but in this text-only mode they'd
-    otherwise look identical.  The star is the universal "winner" mark and
-    occupies the same horizontal slot as the dot so the line length doesn't
-    change.
-
-    Segments are auto-omitted when their data is missing or suppressed:
-      - show_year=False or no year → drops the first dot   (Genre · Sash)
-      - no sash                    → drops the second dot  (Genre · Year)
-      - both → just Genre
-
-    Hiding the year frees up roughly 5-6 characters of horizontal space, so
-    callers can pair show_year=False with a larger font_size_ratio to make
-    the remaining content read bigger without overflowing the poster width.
+    Three sections — left_text (left-aligned), center_text (centred),
+    right_text (right-aligned). bottom_inset shifts the bar upward so text
+    survives client bottom-crop.
     """
-    from PIL import ImageDraw, ImageFont
-    import os
+    import os, colorsys as _cs
 
-    W, H = image.size
-    font_size = max(8, int(W * font_size_ratio))
+    width, height = image.size
+    bar_h = max(24, int(height * bar_height_ratio))
+    bar_y = height - bar_h - int(height * bottom_inset)
 
-    if font_path is None:
-        # Inter-Bold — the rest of the rendering pipeline (modes 1, 2, 3,
-        # sashes, badges) all use Inter-Bold too.  Worth noting: Compact
-        # mode uses ★ (U+2605) to mark award winners and Ubuntu-Bold
-        # doesn't ship that glyph, so Inter is also the right choice
-        # specifically for this renderer.
-        font_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "fonts", "Inter-Bold.ttf",
-        )
+    # ── Font ─────────────────────────────────────────────────────────────────
+    font_size = max(10, int(bar_h * font_size_ratio))
+    font_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"
+    )
     try:
         font = ImageFont.truetype(font_path, font_size)
     except IOError:
         font = ImageFont.load_default()
 
-    draw = ImageDraw.Draw(image)
+    # Measure a fixed reference string that covers every glyph class used in
+    # the bar (ascenders A, descenders gypq, numerals 0, star, separators).
+    # Using the actual text would give different heights for "Crime" vs "Mystery"
+    # (the y-descender changes rendered_h), shifting the baseline poster to poster.
+    _REF = "Agypq0★·"
+    _ref_b  = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), _REF, font=font)
+    text_y  = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1] + max(1, int(bar_h * 0.05))
 
-    genre_text = (genre or "").strip()
-    year_text  = ("" if (year is None or not show_year) else str(year)).strip()
-    sash_text  = (sash_label or "").strip()
+    ink    = (15, 15, 15, 248)
+    blur_r = max(6, int(bar_h * 0.45))
+    crop_y = max(0, bar_y)
+    crop_h = min(bar_h, height - crop_y)
+    region = image.crop((0, crop_y, width, crop_y + crop_h))
 
-    # Build the segments that come before the sash (genre + optional year),
-    # joined with the regular dot.  The sash text is appended separately so
-    # its preceding separator can switch to "★" for winners — see docstring.
-    pre_sash_parts = [s for s in (genre_text, year_text) if s]
-    pre_sash       = " · ".join(pre_sash_parts)
+    blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    thumb   = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
+    arr     = np.array(thumb, dtype=np.float32)
+    dr, dg, db = arr[:,:,0].mean(), arr[:,:,1].mean(), arr[:,:,2].mean()
+    _h2, _s, _v = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
+    tr, tg, tb  = _cs.hsv_to_rgb(_h2, min(1.0, _s*1.2), _v*0.4+0.60)
+    fr_r = int(tr*255*0.6 + 255*0.4)
+    fr_g = int(tg*255*0.6 + 255*0.4)
+    fr_b = int(tb*255*0.6 + 255*0.4)
+    base    = blurred.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
+    frost   = Image.new("RGBA", (width, bar_h), (fr_r, fr_g, fr_b, int(frost_opacity*255)))
+    bar_img = Image.alpha_composite(base, frost)
 
-    if sash_text:
-        sash_sep = " ★ " if sash_type == "win" else " · "
-        line     = pre_sash + sash_sep + sash_text if pre_sash else sash_text
-    else:
-        line = pre_sash
+    txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
+    td        = ImageDraw.Draw(txt_layer)
+    h_pad     = max(20, int(width * 0.055))
 
-    if not line:
-        return
+    if center_text:
+        cw = int(td.textlength(center_text, font=font))
+        td.text(((width - cw) // 2, text_y), center_text, font=font, fill=ink)
+    if left_text:
+        td.text((h_pad, text_y), left_text, font=font, fill=ink)
+    if right_text:
+        rw = int(td.textlength(right_text, font=font))
+        td.text((width - h_pad - rw, text_y), right_text, font=font, fill=ink)
 
-    bb       = draw.textbbox((0, 0), line, font=font)
-    line_w   = bb[2] - bb[0]
-    x        = max(0, (W - line_w) // 2)
-    y        = round(H * y_offset)
-    color    = _compact_palette_color(score, score_color_mode)
-
-    draw.text((x, y), line, font=font, fill=(*color, 255))
+    bar_final = Image.alpha_composite(bar_img, txt_layer)
+    result    = image.copy()
+    result.alpha_composite(bar_final, (0, bar_y))
+    return result
 
 
-# ---------------------------------------------------------------------------
 # Weighted score
 # ---------------------------------------------------------------------------
 

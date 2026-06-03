@@ -947,6 +947,9 @@
     display: block;
     transition: opacity 0.25s ease;
     border-radius: 12px;
+    /* Simulate Stremio's ~0.9% top/bottom crop so inset elements appear as
+       they will in the client. round 12px preserves the corner rounding. */
+    clip-path: inset(0.9% 0 0.9% 0 round 12px);
   }
 
   .preview-empty {
@@ -1519,7 +1522,7 @@
                 <option value="1" selected>Rating Bar</option>
                 <option value="2">Clean</option>
                 <option value="3">Minimalist</option>
-                <option value="4">Compact</option>
+                <option value="4">Frosted Bar</option>
               </select>
             </div>
             <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
@@ -1622,28 +1625,32 @@
               </div>
             </div>
             <div id="rating-mode4-fields" style="display:none;">
-              <div class="field-hint" style="margin-bottom:10px;">Text is colored to reflect rating, I suggest prestige as the majority will be silver.</div>
-              <div class="toggle-row">
-                <div>
-                  <div class="toggle-label">Show Year</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-compact-show-year" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="field" style="margin-top:10px;">
-                <label class="field-label">Font Size</label>
+              <div class="field">
+                <label class="field-label">Bar Height</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-font-mode4" min="0.02" max="0.10" step="0.002" value="0.066" oninput="updateRange(this,'rng-font4'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-font4">0.066</span>
+                  <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.075" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bh5">0.075</span>
                 </div>
               </div>
               <div class="field">
-                <label class="field-label">Vertical Position</label>
+                <label class="field-label">Font Size</label>
                 <div class="range-row">
-                  <input type="range" id="cfg-y-mode4" min="0.00" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y4'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-y4">0.90</span>
+                  <input type="range" id="cfg-bar-font" min="0.15" max="0.70" step="0.01" value="0.58" oninput="updateRange(this,'rng-bf5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bf5">0.58</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Frost Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.50" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bo5">0.50</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Bottom Inset</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.009" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bi5">0.009</span>
                 </div>
               </div>
             </div>
@@ -1801,7 +1808,7 @@
                 <label class="field-label">Inset</label>
                 <div class="field-hint" style="margin-bottom:4px;">Adjust as required for your client, won't match preview.</div>
                 <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.010" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
+                  <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.009" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbi">0.010</span>
                 </div>
               </div>
@@ -2880,7 +2887,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('rating_display_mode', ratingMode);
   if (ratingMode !== 0) {
     // Colour palette: exposed for the modes whose pip/score colour visibly uses it
-    if (ratingMode === 1 || ratingMode === 3 || ratingMode === 4) {
+    if (ratingMode === 1 || ratingMode === 3) {
       params.set('score_color_mode', ni('cfg-score-color-mode'));
     }
     if (ratingMode === 1) {
@@ -2901,9 +2908,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
     } else if (ratingMode === 4) {
-      params.set('compact_font_size_ratio', n('cfg-font-mode4').toFixed(3));
-      params.set('compact_y_offset',        n('cfg-y-mode4').toFixed(2));
-      params.set('compact_show_year',       c('tog-compact-show-year') ? 'true' : 'false');
+      params.set('bar_height_ratio',    n('cfg-bar-height').toFixed(3));
+      params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
+      params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
+      params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
     }
     // Rating weights only affect the displayed score
     const mw = getWeights('movie-weights', MOVIE_SOURCES);
@@ -2950,7 +2958,6 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // Emit it whenever ANY of those is active so the user's drag-to-reorder /
   // disable choices are respected, not silently overridden by server defaults.
   const _sashTextNeeded = showSash
-    || ratingMode === 4
     || (ratingMode === 1 && ni('cfg-bar-append') !== 0);
   if (_sashTextNeeded) {
     params.set('sash_priority', getSashPriorityParam());
@@ -3143,7 +3150,7 @@ function updateRatingFields() {
   document.getElementById('rating-mode3-fields').style.display      = mode === 3 ? '' : 'none';
   document.getElementById('rating-mode4-fields').style.display      = mode === 4 ? '' : 'none';
   document.getElementById('rating-glow-fields').style.display       = mode === 1 ? '' : 'none';
-  document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3 || mode === 4) ? '' : 'none';
+  document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3) ? '' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -3324,9 +3331,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
-  if (p.has('compact_font_size_ratio')) _setEl('cfg-font-mode4',         p.get('compact_font_size_ratio'));
-  if (p.has('compact_y_offset'))        _setEl('cfg-y-mode4',            p.get('compact_y_offset'));
-  if (p.has('compact_show_year'))       _setEl('tog-compact-show-year',  p.get('compact_show_year'));
+  if (p.has('bar_height_ratio'))    _setEl('cfg-bar-height', p.get('bar_height_ratio'));
+  if (p.has('bar_font_size_ratio')) _setEl('cfg-bar-font',   p.get('bar_font_size_ratio'));
+  if (p.has('bar_frost_opacity'))   _setEl('cfg-bar-frost',  p.get('bar_frost_opacity'));
+  if (p.has('bar_bottom_inset'))    _setEl('cfg-bar-inset',  p.get('bar_bottom_inset'));
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));

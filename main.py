@@ -239,7 +239,7 @@ from quality import (
     parse_quality,
     render_badges_left,
 )
-from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, draw_compact_label, _draw_solid_pip
+from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar
 from tmdb import composite_logo, logo_centre_y, fetch_logo, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_release_status, svg_logo_supported, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
@@ -370,13 +370,11 @@ class RequestConfig:
     #   2 = Year + Rating (Genre | Year | Score)
     minimalist_append_mode: int = 0
 
-    # Compact mode (rating_display_mode == 4) — "all info in one strip"
-    # Year is OFF by default; the smaller line lets the font run a bit larger
-    # (~0.066 vs Minimalist's 0.055).  Flip show_year on if you'd rather
-    # include the year — you'll likely want to drop the font ratio back to ~0.055.
-    compact_font_size_ratio: float = 0.066
-    compact_y_offset:        float = 0.90
-    compact_show_year:       bool  = False
+    # Frosted bar (rating_display_mode == 4)
+    bar_height_ratio:        float = 0.075
+    bar_font_size_ratio:     float = 0.58
+    bar_frost_opacity:       float = 0.50
+    bar_bottom_inset:        float = 0.009
 
     logo_max_w_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
@@ -421,7 +419,7 @@ class RequestConfig:
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_notch_offset: float = 0.0   # downward text nudge as fraction of badge height
-    sash_badge_inset: float = 0.01         # top-edge offset as fraction of poster height (± small)
+    sash_badge_inset: float = 0.009        # top-edge offset as fraction of poster height (± small)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
     sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
@@ -561,9 +559,10 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
     cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 2)
 
-    cfg.compact_font_size_ratio = _f("compact_font_size_ratio", cfg.compact_font_size_ratio, 0.0, 0.5)
-    cfg.compact_y_offset        = _f("compact_y_offset",        cfg.compact_y_offset,        0.0, 1.0)
-    cfg.compact_show_year       = _b("compact_show_year",       cfg.compact_show_year)
+    cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
+    cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
+    cfg.bar_frost_opacity       = _f("bar_frost_opacity",       cfg.bar_frost_opacity,       0.0,  1.0)
+    cfg.bar_bottom_inset        = _f("bar_bottom_inset",        cfg.bar_bottom_inset,        0.0,  0.10)
 
     cfg.logo_max_w_ratio  = _f("logo_max_w_ratio",  cfg.logo_max_w_ratio,  0.0, 1.5)
     cfg.logo_max_h_ratio  = _f("logo_max_h_ratio",  cfg.logo_max_h_ratio,  0.0, 1.0)
@@ -969,8 +968,7 @@ def build_poster(
             draw.text((tx, ty),                                  line, font=font, fill=(255, 255, 255, 255))
 
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
-    # itself is rendered.  Compact rating mode (4) also reads from this to
-    # populate the bottom-line slot with the sash label + colour.
+    # itself is rendered independently.
     sash_result = (
         pick_sash(discovery_meta, cfg.sash_priority)
         if discovery_meta is not None
@@ -1128,26 +1126,24 @@ def build_poster(
                                     width=pip_w, height=pip_h, color=(192, 192, 200))
 
         elif cfg.rating_display_mode == 4:
-            # Compact — Genre · Year · Sash text, centred.  Reads the sash
-            # pick from the hoisted sash_result above so the sash-text
-            # segment still appears even when the diagonal sash itself is
-            # hidden (compact is purely additive).  sash_type is passed in
-            # so the renderer can switch the preceding separator from "·"
-            # to "★" for winners — see draw_compact_label docstring.
-            _sash_label, _sash_type = (
-                sash_result if sash_result else (None, None)
-            )
-            draw_compact_label(
+            # Frosted bar/notch — centred pipe-separated label at the bottom.
+            # Format: Year | Genre | ★ Rating  (omit any missing field)
+            _score_str = str(score) if score not in ("N/A", None) else ""
+            _year_str  = str(release_year) if release_year else ""
+            _parts     = [p for p in [
+                _year_str,
+                genre_label or "",
+                f"★ {_score_str}" if _score_str else "",
+            ] if p]
+            image = draw_frosted_bar(
                 image,
-                genre=genre_label,
-                year=release_year,
-                score=score,
-                sash_label=_sash_label,
-                sash_type=_sash_type,
-                font_size_ratio=cfg.compact_font_size_ratio,
-                y_offset=cfg.compact_y_offset,
-                score_color_mode=cfg.score_color_mode,
-                show_year=cfg.compact_show_year,
+                left_text   = "",
+                center_text = " · ".join(_parts),
+                right_text  = "",
+                bar_height_ratio = cfg.bar_height_ratio,
+                font_size_ratio  = cfg.bar_font_size_ratio,
+                frost_opacity    = cfg.bar_frost_opacity,
+                bottom_inset     = cfg.bar_bottom_inset,
             )
 
     # --- Discovery sash / badge ---
