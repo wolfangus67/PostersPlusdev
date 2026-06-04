@@ -443,7 +443,7 @@ def draw_frosted_bar(
         arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
         arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
         bar_img = Image.fromarray(arr, "RGBA")
-        text_y += max(1, int(bar_h * 0.03))
+        text_y += max(1, int(bar_h * 0.05)) + _accent_stripe // 2 - _lift
 
     elif style in ("silver", "gold"):
         stripe = _accent_stripe

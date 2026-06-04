@@ -1456,6 +1456,27 @@ def draw_award_badge(
         result.alpha_composite(badge_final, (bx, by_composite))
         return result
 
+    if notch_style == "black":
+        # ── Pure black: dark near-opaque body, no border, silver/white text ──
+        badge_ss = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        rr_mask_ss = Image.new("L", (bw, bh), 0)
+        ImageDraw.Draw(rr_mask_ss).rounded_rectangle(
+            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255,
+            corners=(False, False, True, True)
+        )
+        body = Image.new("RGBA", (bw, bh), (10, 10, 12, 230))
+        body.putalpha(rr_mask_ss)
+        badge_ss = body
+        txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        td = ImageDraw.Draw(txt_layer)
+        tx, ty = _text_center(td, label, font, bw / 2, text_cy_ss)
+        td.text((tx, ty), label, font=font, fill=(210, 210, 218, 245))
+        badge_ss = Image.alpha_composite(badge_ss, txt_layer)
+        badge_final = badge_ss.resize((badge_w, badge_h), Image.LANCZOS)
+        result = image.copy()
+        result.alpha_composite(badge_final, (bx, by_composite))
+        return result
+
     body_alpha   = 235
     border_alpha = 215
 
