@@ -779,12 +779,13 @@ def build_poster(
 
     width, height = image.size
 
-    # Cinema-only greyscale: desaturate the base art when the title is still only
-    # in cinemas (release_status == "Cinema").  Overlays drawn afterwards (sashes,
-    # badges, ratings, logo) stay in colour.  release_status is only populated
-    # when the release-status sash is enabled, so this is implicitly gated on it.
+    # Greyscale the base art when the title isn't available yet — still only in
+    # cinemas, or still in production (release_status "Cinema" / "Production").
+    # Overlays drawn afterwards (sashes, badges, ratings, logo) stay in colour.
+    # release_status is only populated when the release-status sash is enabled,
+    # so this is implicitly gated on it.
     if (cfg.cinema_greyscale and discovery_meta is not None
-            and discovery_meta.release_status == "Cinema"):
+            and discovery_meta.release_status in ("Cinema", "Production")):
         image = ImageOps.grayscale(image).convert("RGBA")
 
     draw = ImageDraw.Draw(image)
@@ -1007,13 +1008,13 @@ def build_poster(
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
     # itself is rendered independently.
     #
-    # When cinema greyscale is active on a Cinema-only title, force the release-
-    # status slot to the front so the "Cinema" badge always wins — that's what
-    # tells the user the poster is greyscale because it's cinema-filtered, rather
+    # When greyscale is active on an unreleased title (Cinema / Production),
+    # force the release-status slot to the front so its badge always wins — that
+    # tells the user the poster is greyscale because it's unavailable, rather
     # than a title whose art happens to be black & white.
     _sash_priority = cfg.sash_priority
     if (cfg.cinema_greyscale and discovery_meta is not None
-            and discovery_meta.release_status == "Cinema"
+            and discovery_meta.release_status in ("Cinema", "Production")
             and "release_status" in _sash_priority):
         _sash_priority = ["release_status"] + [s for s in _sash_priority if s != "release_status"]
     sash_result = (
@@ -2416,10 +2417,10 @@ async def get_poster(
             # streaming regardless of what the official release dates say.
             if _release_status in ("Cinema", "Production") and is_digital_release(imdb_id):
                 _release_status = "Streaming"
-            # Cinema-only mode: keep the badge purely as an "in cinemas" marker —
-            # drop every other status so the slot is skipped (and lower-priority
-            # sashes can surface) for already-released titles.
-            if rcfg.release_status_cinema_only and _release_status != "Cinema":
+            # Cinema-only mode: keep the badge purely as an "unavailable" marker —
+            # show only Cinema / Production and drop the rest so the slot is
+            # skipped (and lower-priority sashes can surface) for released titles.
+            if rcfg.release_status_cinema_only and _release_status not in ("Cinema", "Production"):
                 _release_status = None
 
         # ------------------------------------------------------------------
