@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 logging.basicConfig(
     level=logging.INFO,
@@ -209,7 +209,8 @@ async def _background_quality_fetch(
 from age_badge import draw_quality_age_badge, draw_tier_bar
 from awards import sample_frosted_notch_rgb
 from ratings import sample_frosted_bar_rgb
-from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
+from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, _STAR_WIN_AWARDS
+from i18n import load_languages, translate_genre, translate_sash
 from cache import (
     get_cached_quality,
     get_cached_rating,
@@ -344,6 +345,8 @@ class RequestConfig:
     Defaults come from the global config module; query params override them.
     """
     show_award_sash:     bool = field(default_factory=lambda: _cfg.SHOW_AWARD_SASH)
+    cinema_greyscale:    bool = True    # greyscale art when release_status == "Cinema"
+    release_status_cinema_only: bool = True   # only show release status when "Cinema"
     badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
     rating_display_mode: int  = field(default_factory=lambda: _cfg.SHOW_RATING_DISPLAY_MODE)
 
@@ -504,6 +507,8 @@ def build_request_config(params: dict) -> RequestConfig:
             return default
 
     cfg.show_award_sash         = _b("show_award_sash",        cfg.show_award_sash)
+    cfg.cinema_greyscale        = _b("cinema_greyscale",       cfg.cinema_greyscale)
+    cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.muted                   = _b("muted",                  cfg.muted)
     cfg.score_out_of_10         = _b("score_out_of_10",        cfg.score_out_of_10)
     cfg.textless                = _b("textless",               cfg.textless)
@@ -773,11 +778,25 @@ def build_poster(
 ) -> Image.Image:
 
     width, height = image.size
+
+    # Cinema-only greyscale: desaturate the base art when the title is still only
+    # in cinemas (release_status == "Cinema").  Overlays drawn afterwards (sashes,
+    # badges, ratings, logo) stay in colour.  release_status is only populated
+    # when the release-status sash is enabled, so this is implicitly gated on it.
+    if (cfg.cinema_greyscale and discovery_meta is not None
+            and discovery_meta.release_status == "Cinema"):
+        image = ImageOps.grayscale(image).convert("RGBA")
+
     draw = ImageDraw.Draw(image)
 
-    # Printed form of the genre (e.g. "Documentary" → "Doc").  Use this only for
-    # text drawn on the poster; keep `genre` for font / colour lookups.
-    genre_label = _GENRE_LABEL_OVERRIDES.get(genre, genre)
+    # Printed form of the genre.  Translate the canonical English name when a
+    # translation exists for the request language; otherwise keep the English
+    # path including the space-saving override (e.g. "Documentary" → "Doc").
+    _genre_tr = translate_genre(genre, cfg.logo_language)
+    if _genre_tr != genre:
+        genre_label = _genre_tr
+    else:
+        genre_label = _GENRE_LABEL_OVERRIDES.get(genre, genre)
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -987,8 +1006,18 @@ def build_poster(
 
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
     # itself is rendered independently.
+    #
+    # When cinema greyscale is active on a Cinema-only title, force the release-
+    # status slot to the front so the "Cinema" badge always wins — that's what
+    # tells the user the poster is greyscale because it's cinema-filtered, rather
+    # than a title whose art happens to be black & white.
+    _sash_priority = cfg.sash_priority
+    if (cfg.cinema_greyscale and discovery_meta is not None
+            and discovery_meta.release_status == "Cinema"
+            and "release_status" in _sash_priority):
+        _sash_priority = ["release_status"] + [s for s in _sash_priority if s != "release_status"]
     sash_result = (
-        pick_sash(discovery_meta, cfg.sash_priority)
+        pick_sash(discovery_meta, _sash_priority)
         if discovery_meta is not None
         else None
     )
@@ -1010,9 +1039,10 @@ def build_poster(
     ):
         _bar_rgb   = sample_frosted_bar_rgb(image, cfg.bar_height_ratio, cfg.bar_bottom_inset)
         _notch_rgb = sample_frosted_notch_rgb(
-            image, sash_result[0], sash_type=sash_result[1],
+            image, translate_sash(sash_result[0], cfg.logo_language), sash_type=sash_result[1],
             size_ratio_w=cfg.sash_badge_size_w, size_ratio_h=cfg.sash_badge_size_h,
             font_size_ratio=cfg.sash_badge_font_ratio, notch_inset=cfg.sash_badge_inset,
+            star=(sash_result[1] == "win" and sash_result[0] in _STAR_WIN_AWARDS),
         )
         def _sat(rgb: tuple[float, float, float]) -> float:
             import colorsys
@@ -1047,7 +1077,7 @@ def build_poster(
 
             if _sash_text_for_label:
                 _sash_sep = " ★ " if _sash_type_for_label == "win" else " · "
-                label = _label_main + _sash_sep + _sash_text_for_label
+                label = _label_main + _sash_sep + translate_sash(_sash_text_for_label, cfg.logo_language)
             else:
                 label = _label_main
             rating_cy = height * cfg.accent_bar_y_offset
@@ -1189,7 +1219,7 @@ def build_poster(
             elif cfg.bar_append == "year":
                 _parts = [_year_str, genre_label or ""]
             else:  # "sash"
-                _parts = [genre_label or "", _bar_sash or ""]
+                _parts = [genre_label or "", translate_sash(_bar_sash, cfg.logo_language) if _bar_sash else ""]
             _parts = [p for p in _parts if p]
             _sep = "  ·  " if len(_parts) <= 2 else " · "
             image = draw_frosted_bar(
@@ -1219,8 +1249,13 @@ def build_poster(
     # --- Discovery sash / badge ---
     if cfg.show_award_sash and sash_result is not None:
         label, sash_type = sash_result
+        # Decide the ★ winner marker on the CANONICAL English label, then render
+        # the translated label.  (The renderers' own English set-match would miss
+        # a translated label and drop the star.)
+        _is_star  = sash_type == "win" and label in _STAR_WIN_AWARDS
+        _label_tr = translate_sash(label, cfg.logo_language)
         if cfg.sash_badge:
-            image = draw_award_badge(image, label, sash_type=sash_type,
+            image = draw_award_badge(image, _label_tr, sash_type=sash_type,
                                      size_ratio_w=cfg.sash_badge_size_w,
                                      size_ratio_h=cfg.sash_badge_size_h,
                                      notch_style=cfg.sash_badge_style,
@@ -1228,9 +1263,10 @@ def build_poster(
                                      notch_inset=cfg.sash_badge_inset,
                                      font_size_ratio=cfg.sash_badge_font_ratio,
                                      frost_opacity=cfg.sash_badge_frost_opacity,
-                                     tint_rgb=_shared_tint)
+                                     tint_rgb=_shared_tint,
+                                     star=_is_star)
         else:
-            image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted,
+            image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,
                                     height_ratio=cfg.sash_height_ratio)
 
@@ -1283,6 +1319,7 @@ async def lifespan(app: FastAPI):
     if _cfg.QUALITY_SOURCE not in ("aiostreams", "scraper"):
         logger.warning(f"Unknown QUALITY_SOURCE={_cfg.QUALITY_SOURCE!r} — defaulting to aiostreams behaviour.")
     _configurator_html = _load_configurator_html()
+    load_languages()   # poster-output translations (English fallback if absent)
     # Warm the genre fallback backgrounds into memory so no-art posters render
     # with zero extra latency (same idea as the badge cache warm-up).
     try:
@@ -2379,6 +2416,11 @@ async def get_poster(
             # streaming regardless of what the official release dates say.
             if _release_status in ("Cinema", "Production") and is_digital_release(imdb_id):
                 _release_status = "Streaming"
+            # Cinema-only mode: keep the badge purely as an "in cinemas" marker —
+            # drop every other status so the slot is skipped (and lower-priority
+            # sashes can surface) for already-released titles.
+            if rcfg.release_status_cinema_only and _release_status != "Cinema":
+                _release_status = None
 
         # ------------------------------------------------------------------
         # Build DiscoveryMeta

@@ -1313,16 +1313,18 @@ def sample_frosted_notch_rgb(
     size_ratio_h: float = 1.0,
     font_size_ratio: float = 0.43,
     notch_inset: float = 0.01,
+    star: bool | None = None,
 ) -> tuple[float, float, float]:
     """Dominant RGB the frosted notch would sample from its crop region.
 
     Replicates draw_award_badge's geometry + sampling so the colour-matching
     logic upstream can compare it against the frosted bar.  Keep the constants
-    here in sync with draw_award_badge.
+    here in sync with draw_award_badge.  `star` overrides the ★ decision when
+    the caller already resolved it on the canonical (pre-translation) label.
     """
     width, height = image.size
     SS = 3
-    if sash_type == "win" and label in _STAR_WIN_AWARDS:
+    if star if star is not None else (sash_type == "win" and label in _STAR_WIN_AWARDS):
         label = f"★  {label}"
 
     badge_h = int(height * 0.075 * size_ratio_h)
@@ -1364,6 +1366,7 @@ def draw_award_badge(
     font_size_ratio: float = 0.43,    # font size as fraction of badge height
     frost_opacity: float = 0.75,      # frosted overlay opacity (0.0–1.0)
     tint_rgb: tuple[float, float, float] | None = None,  # override sampled colour (frosted)
+    star: bool | None = None,         # override ★ decision (resolved on canonical label)
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1408,8 +1411,9 @@ def draw_award_badge(
     # user's notch_style fixes it), so prefix a ★ for the winner — consistent
     # with the star in score/compact modes.  The badge width auto-expands to fit.
     # Double space after the star so it sits clearly left of the text rather than
-    # crowding the first letter.
-    if sash_type == "win" and label in _STAR_WIN_AWARDS:
+    # crowding the first letter.  `star` (when provided) is resolved upstream on
+    # the canonical English label so translated labels still get their marker.
+    if star if star is not None else (sash_type == "win" and label in _STAR_WIN_AWARDS):
         label = f"★  {label}"
 
     # ── Dimensions ───────────────────────────────────────────────────────────

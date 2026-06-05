@@ -295,4 +295,5 @@ SASH_PRIORITY: list[str] = [
     "metacritic",
     "true_story",
     "structural",
+    "release_status",
 ]

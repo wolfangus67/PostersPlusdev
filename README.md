@@ -204,6 +204,16 @@ Scores from multiple providers are normalised to a 0–100 scale and combined us
 
 ---
 
+## Poster Translations
+
+Text rendered onto posters (genre labels and info-sash labels) can be localised. The language follows the request's **poster/logo language** setting.
+
+To add a language, copy `languages/en.json` to `languages/<code>.json` (e.g. `fr.json`) and translate the **values** only — the keys are the canonical English strings and must stay unchanged. Translation is display-only with per-key English fallback: any missing key, malformed file, or language with no JSON falls back to English, so partial translations are safe.
+
+> Note: contributed languages must be **Latin-script**. The bundled font has no CJK/Arabic glyphs and no right-to-left shaping, so those scripts will not render correctly.
+
+---
+
 ## Caching
 
 PostersPlus uses a SQLite database (WAL mode) for all caching. The cache volume is mounted at `/app/cache` and persists across container restarts.
