@@ -346,6 +346,7 @@ class RequestConfig:
     """
     show_award_sash:     bool = field(default_factory=lambda: _cfg.SHOW_AWARD_SASH)
     cinema_greyscale:    bool = True    # greyscale art when release_status == "Cinema"
+    cinema_greyscale_skip_when_quality_found: bool = False  # when wait_for_quality is on, keep colour if quality is found
     release_status_cinema_only: bool = True   # only show release status when "Cinema"
     badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
     rating_display_mode: int  = field(default_factory=lambda: _cfg.SHOW_RATING_DISPLAY_MODE)
@@ -508,6 +509,10 @@ def build_request_config(params: dict) -> RequestConfig:
 
     cfg.show_award_sash         = _b("show_award_sash",        cfg.show_award_sash)
     cfg.cinema_greyscale        = _b("cinema_greyscale",       cfg.cinema_greyscale)
+    cfg.cinema_greyscale_skip_when_quality_found = _b(
+        "cinema_greyscale_skip_when_quality_found",
+        cfg.cinema_greyscale_skip_when_quality_found,
+    )
     cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.muted                   = _b("muted",                  cfg.muted)
     cfg.score_out_of_10         = _b("score_out_of_10",        cfg.score_out_of_10)
@@ -784,8 +789,17 @@ def build_poster(
     # Overlays drawn afterwards (sashes, badges, ratings, logo) stay in colour.
     # release_status is only populated when the release-status sash is enabled,
     # so this is implicitly gated on it.
-    if (cfg.cinema_greyscale and discovery_meta is not None
-            and discovery_meta.release_status in ("Cinema", "Production")):
+    greyscale_due_to_unavailable = (
+        cfg.cinema_greyscale
+        and discovery_meta is not None
+        and discovery_meta.release_status in ("Cinema", "Production")
+        and not (
+            cfg.wait_for_quality
+            and cfg.cinema_greyscale_skip_when_quality_found
+            and bool(quality_tokens)
+        )
+    )
+    if greyscale_due_to_unavailable:
         image = ImageOps.grayscale(image).convert("RGBA")
 
     draw = ImageDraw.Draw(image)
@@ -1013,9 +1027,7 @@ def build_poster(
     # tells the user the poster is greyscale because it's unavailable, rather
     # than a title whose art happens to be black & white.
     _sash_priority = cfg.sash_priority
-    if (cfg.cinema_greyscale and discovery_meta is not None
-            and discovery_meta.release_status in ("Cinema", "Production")
-            and "release_status" in _sash_priority):
+    if greyscale_due_to_unavailable and "release_status" in _sash_priority:
         _sash_priority = ["release_status"] + [s for s in _sash_priority if s != "release_status"]
     sash_result = (
         pick_sash(discovery_meta, _sash_priority)

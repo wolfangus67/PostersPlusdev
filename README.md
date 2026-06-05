@@ -73,7 +73,7 @@ Create a `compose.yaml` with the following content, substituting your own values
 ```yaml
 services:
   postersplus:
-    image: ghcr.io/umbraprojects/postersplus:latest
+    image: ghcr.io/wolfangus67/postersplusdev:latest
     ports:
       - "8000:8000"    # change the left side if port 8000 is already in use
     restart: unless-stopped

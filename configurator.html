@@ -2183,6 +2183,16 @@
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
                   </label>
                 </div>
+                <div class="toggle-row" style="margin-top:8px;">
+                  <div>
+                    <div class="toggle-label">Keep Colour When Quality Is Found</div>
+                    <div class="field-hint">Only applies when Wait for Quality is enabled. If AIOStreams returns files, unavailable posters stay in colour; if it returns nothing, greyscale still applies.</div>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-cinema-greyscale-quality" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
                 <div class="field-hint" style="margin-top:4px;">By default quality is fetched in the background if uncached, this will prevent the poster rendering until it's ready.</div>
               </div>
             </div>
@@ -3239,6 +3249,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // ── Info Sash ──────────────────────────────────────────────────────────────
   params.set('show_award_sash', showSash ? 'true' : 'false');
   params.set('cinema_greyscale', c('tog-cinema-greyscale') ? 'true' : 'false');
+  params.set('cinema_greyscale_skip_when_quality_found', c('tog-cinema-greyscale-quality') ? 'true' : 'false');
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   if (showSash) {
     const isBadge = c('tog-sash-badge');
@@ -3749,6 +3760,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('show_award_sash')) _setEl('tog-award-sash',    p.get('show_award_sash'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
+  if (p.has('cinema_greyscale_skip_when_quality_found')) _setEl('tog-cinema-greyscale-quality', p.get('cinema_greyscale_skip_when_quality_found'));
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   if (p.has('sash_badge'))               _setEl('tog-sash-badge',              p.get('sash_badge'));
