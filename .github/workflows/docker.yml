@@ -50,7 +50,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/umbraprojects/postersplus
+          images: ghcr.io/wolfangus67/postersplusdev
           # Disable the metadata-action's automatic :latest behaviour — its
           # default (latest=auto) adds :latest to every semver tag push, so
           # parallel v1.0.0 / v1.0.1 / v1.0.2 builds race to claim it and
