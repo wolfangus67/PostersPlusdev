@@ -207,6 +207,8 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar
+from awards import sample_frosted_notch_rgb
+from ratings import sample_frosted_bar_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from cache import (
     get_cached_quality,
@@ -378,6 +380,7 @@ class RequestConfig:
     bar_style:               str   = "frosted"  # "frosted"|"silver"|"gold"|"rating_black"|"rating_frosted"
     bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"
     bar_score_out_of_10:     bool  = False
+    bar_match_notch:         bool  = False  # share one frosted tint with the sash notch
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
 
     logo_max_w_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
@@ -574,6 +577,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _bac in ("silver", "gold", "sample", "palette_0", "palette_1", "palette_2"):
         cfg.bar_accent = _bac
     cfg.bar_score_out_of_10     = _b("bar_score_out_of_10",     cfg.bar_score_out_of_10)
+    cfg.bar_match_notch         = _b("bar_match_notch",         cfg.bar_match_notch)
     _bap = (params.get("bar_append") or "").strip().lower()
     if _bap in ("rating_year", "rating", "year", "sash"):
         cfg.bar_append = _bap
@@ -989,6 +993,32 @@ def build_poster(
         else None
     )
 
+    # --- Shared frosted tint (Match Notch Colour) ---------------------------
+    # When the frosted rating bar (mode 4) and a frosted sash notch are BOTH on
+    # and bar_match_notch is set, sample each region now (before either is drawn)
+    # and force both to the more saturated of the two colours so they match.
+    _shared_tint: tuple[float, float, float] | None = None
+    _notch_active = (
+        cfg.show_award_sash and sash_result is not None
+        and cfg.sash_badge and cfg.sash_badge_style == "frosted"
+    )
+    if (
+        cfg.bar_match_notch
+        and cfg.rating_display_mode == 4
+        and cfg.bar_style in ("frosted", "rating_frosted")
+        and _notch_active
+    ):
+        _bar_rgb   = sample_frosted_bar_rgb(image, cfg.bar_height_ratio, cfg.bar_bottom_inset)
+        _notch_rgb = sample_frosted_notch_rgb(
+            image, sash_result[0], sash_type=sash_result[1],
+            size_ratio_w=cfg.sash_badge_size_w, size_ratio_h=cfg.sash_badge_size_h,
+            font_size_ratio=cfg.sash_badge_font_ratio, notch_inset=cfg.sash_badge_inset,
+        )
+        def _sat(rgb: tuple[float, float, float]) -> float:
+            import colorsys
+            return colorsys.rgb_to_hsv(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)[1]
+        _shared_tint = _bar_rgb if _sat(_bar_rgb) >= _sat(_notch_rgb) else _notch_rgb
+
     # --- Rating / genre label ---
     if cfg.rating_display_mode != 0:
 
@@ -1183,6 +1213,7 @@ def build_poster(
                         if score not in ("N/A", None) else (210, 210, 218)
                     )
                 ) if cfg.bar_style in ("rating_black", "rating_frosted") else None,
+                tint_rgb         = _shared_tint,
             )
 
     # --- Discovery sash / badge ---
@@ -1196,7 +1227,8 @@ def build_poster(
                                      notch_text_offset=cfg.sash_badge_notch_offset,
                                      notch_inset=cfg.sash_badge_inset,
                                      font_size_ratio=cfg.sash_badge_font_ratio,
-                                     frost_opacity=cfg.sash_badge_frost_opacity)
+                                     frost_opacity=cfg.sash_badge_frost_opacity,
+                                     tint_rgb=_shared_tint)
         else:
             image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,

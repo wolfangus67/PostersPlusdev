@@ -365,6 +365,27 @@ def draw_score_bar_vertical(
 # Frosted bar (rating_display_mode == 4)
 # ---------------------------------------------------------------------------
 
+def sample_frosted_bar_rgb(
+    image: Image.Image,
+    bar_height_ratio: float = 0.090,
+    bottom_inset: float = 0.0,
+) -> tuple[float, float, float]:
+    """Dominant RGB the frosted bar would sample from its bottom strip.
+
+    Mirrors the crop/blur/thumbnail in draw_frosted_bar's _build_frosted_base
+    so the colour-matching logic upstream can compare it against the notch.
+    """
+    width, height = image.size
+    bar_h = max(24, int(height * bar_height_ratio))
+    bar_y = height - bar_h - int(height * bottom_inset)
+    cy = max(0, bar_y); ch = min(bar_h, height - cy)
+    reg = image.crop((0, cy, width, cy + ch))
+    blr = reg.filter(ImageFilter.GaussianBlur(radius=max(6, int(bar_h * 0.45))))
+    th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
+    ar  = np.array(th, dtype=np.float32)
+    return float(ar[:, :, 0].mean()), float(ar[:, :, 1].mean()), float(ar[:, :, 2].mean())
+
+
 def draw_frosted_bar(
     image: Image.Image,
     left_text: str,
@@ -377,6 +398,7 @@ def draw_frosted_bar(
     style: str = "frosted",
     score: int | str | None = None,
     fill_color: tuple[int, int, int] | None = None,
+    tint_rgb: tuple[float, float, float] | None = None,
 ) -> Image.Image:
     """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
@@ -386,6 +408,9 @@ def draw_frosted_bar(
     style="rating_black"   — dark body, rating progress bar (fill_color drives colour).
     style="rating_frosted" — frosted body, dark semi-transparent rating bar for contrast.
     fill_color pre-resolved accent colour for rating_black (ignored for rating_frosted).
+    tint_rgb overrides the sampled dominant colour for frosted styles so the bar
+    and the info-sash notch can share one tint (sampling the glass texture still
+    comes from the actual poster region — only the colour cast is forced).
     """
     import os, colorsys as _cs
 
@@ -428,9 +453,12 @@ def draw_frosted_bar(
         cy = max(0, bar_y); ch = min(bar_h, height - cy)
         reg = image.crop((0, cy, width, cy + ch))
         blr = reg.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
-        ar  = np.array(th, dtype=np.float32)
-        dr, dg, db = ar[:,:,0].mean(), ar[:,:,1].mean(), ar[:,:,2].mean()
+        if tint_rgb is not None:
+            dr, dg, db = tint_rgb
+        else:
+            th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
+            ar  = np.array(th, dtype=np.float32)
+            dr, dg, db = ar[:,:,0].mean(), ar[:,:,1].mean(), ar[:,:,2].mean()
         _h2, _s2, _v2 = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
         tr, tg, tb = _cs.hsv_to_rgb(_h2, min(1.0, _s2*1.2), _v2*0.4+0.60)
         r, g, b = int(tr*255*0.6+255*0.4), int(tg*255*0.6+255*0.4), int(tb*255*0.6+255*0.4)

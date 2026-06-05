@@ -1305,6 +1305,53 @@ def _sash_body_cairo(
 _STAR_WIN_AWARDS = {"Best Picture", "Golden Globe"}
 
 
+def sample_frosted_notch_rgb(
+    image: Image.Image,
+    label: str,
+    sash_type: str = "win",
+    size_ratio_w: float = 1.0,
+    size_ratio_h: float = 1.0,
+    font_size_ratio: float = 0.43,
+    notch_inset: float = 0.01,
+) -> tuple[float, float, float]:
+    """Dominant RGB the frosted notch would sample from its crop region.
+
+    Replicates draw_award_badge's geometry + sampling so the colour-matching
+    logic upstream can compare it against the frosted bar.  Keep the constants
+    here in sync with draw_award_badge.
+    """
+    width, height = image.size
+    SS = 3
+    if sash_type == "win" and label in _STAR_WIN_AWARDS:
+        label = f"★  {label}"
+
+    badge_h = int(height * 0.075 * size_ratio_h)
+    _fonts_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    font_size_ss = int(badge_h * font_size_ratio) * SS
+    try:
+        font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size_ss)
+    except IOError:
+        font = ImageFont.load_default()
+
+    _tmp_d    = ImageDraw.Draw(Image.new("L", (1, 1)))
+    _tbbox    = _tmp_d.textbbox((0, 0), label, font=font)
+    text_w_ss = _tbbox[2] - _tbbox[0]
+
+    _h_pad      = int(badge_h * 0.70)
+    min_badge_w = int(width * 0.28 * size_ratio_w)
+    max_badge_w = int(width * 0.70)
+    badge_w     = max(min_badge_w, min(max_badge_w, text_w_ss // SS + _h_pad))
+
+    bx = (width - badge_w) // 2
+    by_composite = max(-badge_h, int(height * notch_inset))
+    crop_y = max(0, by_composite)
+    region = image.crop((bx, crop_y, bx + badge_w, crop_y + badge_h))
+    blurred = region.filter(ImageFilter.GaussianBlur(radius=max(4, int(badge_h * 0.35))))
+    thumb = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
+    arr = np.array(thumb, dtype=np.float32)
+    return float(arr[:, :, 0].mean()), float(arr[:, :, 1].mean()), float(arr[:, :, 2].mean())
+
+
 def draw_award_badge(
     image: Image.Image,
     label: str,
@@ -1316,6 +1363,7 @@ def draw_award_badge(
     notch_inset: float = 0.01,        # top-edge offset as fraction of poster height (± small)
     font_size_ratio: float = 0.43,    # font size as fraction of badge height
     frost_opacity: float = 0.75,      # frosted overlay opacity (0.0–1.0)
+    tint_rgb: tuple[float, float, float] | None = None,  # override sampled colour (frosted)
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1412,10 +1460,14 @@ def draw_award_badge(
         blurred_ss = blurred.resize((bw, bh), Image.LANCZOS).convert("RGBA")
 
         # Sample dominant colour from the (lightly blurred) region — use a small
-        # thumbnail so the mean is fast and noise-free.
-        thumb = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
-        arr_thumb = np.array(thumb, dtype=np.float32)
-        dr, dg, db = arr_thumb[:, :, 0].mean(), arr_thumb[:, :, 1].mean(), arr_thumb[:, :, 2].mean()
+        # thumbnail so the mean is fast and noise-free.  tint_rgb (when supplied)
+        # overrides the colour so the notch can match the frosted rating bar.
+        if tint_rgb is not None:
+            dr, dg, db = tint_rgb
+        else:
+            thumb = blurred.resize((8, 8), Image.LANCZOS).convert("RGB")
+            arr_thumb = np.array(thumb, dtype=np.float32)
+            dr, dg, db = arr_thumb[:, :, 0].mean(), arr_thumb[:, :, 1].mean(), arr_thumb[:, :, 2].mean()
 
         # Boost toward a bright, saturated version of that colour so the tint
         # reads clearly: push V toward 1.0 while keeping H+S, then mix 60 % of

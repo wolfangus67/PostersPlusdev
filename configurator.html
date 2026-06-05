@@ -1098,6 +1098,121 @@
   .copy-feedback.show { opacity: 1; }
 
   /* ── LOG LINE ── */
+  /* ── PRESET MODAL ── */
+  .preset-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0, 0, 0, 0.80);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .preset-modal.open { display: flex; }
+  .preset-modal-box {
+    background: var(--black2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 24px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .preset-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .preset-modal-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--silver);
+  }
+  .preset-modal-close {
+    background: none;
+    border: none;
+    color: var(--silver-dim);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 4px;
+  }
+  .preset-modal-close:hover { color: var(--silver); }
+  .preset-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    scrollbar-width: none;
+  }
+  .preset-grid::-webkit-scrollbar { display: none; }
+  .preset-card {
+    background: var(--black3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+    flex-shrink: 0;
+    height: 220px;
+    transition: border-color 0.15s;
+  }
+  .preset-card:hover { border-color: var(--silver-dim); }
+  .preset-card-img {
+    width: 147px;  /* 2:3 ratio at 220px height */
+    height: 220px;
+    object-fit: cover;
+    display: block;
+    flex-shrink: 0;
+    background: var(--black);
+  }
+  .preset-card-img-placeholder {
+    width: 147px;
+    height: 220px;
+    flex-shrink: 0;
+    background: var(--black);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.15em;
+  }
+  .preset-card-body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 200px;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+  .preset-card-name {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold-bright);
+    text-align: center;
+  }
+  .preset-card-desc {
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    flex: 1;
+    overflow: hidden;
+  }
+  .preset-card { cursor: pointer; }
   /* ── IMPORT MODAL ── */
   .import-modal {
     display: none;
@@ -1665,6 +1780,16 @@
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row" id="bar-match-notch-row" style="display:none;">
+                <div>
+                  <div class="toggle-label">Match Notch Colour</div>
+                  <div class="field-hint" style="margin-top:2px;">When the info sash uses the frosted notch, both share the more saturated colour.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bar-match-notch" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="field" style="margin-top:10px;">
                 <label class="field-label">Bar Height</label>
                 <div class="range-row">
@@ -2031,6 +2156,7 @@
         <div class="preview-controls">
           <div class="btn-row">
             <button class="btn btn-preview" onclick="copyUrl()">Copy URL</button>
+            <button class="btn btn-primary" onclick="openPresetModal()">Load Preset</button>
             <button class="btn btn-primary" id="btn-import" onclick="toggleImportBar()">Import URL</button>
             <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()">Reset</button>
             <span class="copy-feedback" id="copy-fb">Copied ✓</span>
@@ -2955,6 +3081,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
         params.set('bar_accent', vEl('cfg-bar-accent') || 'silver');
       params.set('bar_append',          vEl('cfg-bar4-append') || 'rating_year');
       params.set('bar_score_out_of_10', c('tog-bar-score-10') ? 'true' : 'false');
+      if (_bs === 'frosted' || _bs === 'rating_frosted')
+        params.set('bar_match_notch', c('tog-bar-match-notch') ? 'true' : 'false');
       params.set('bar_height_ratio',    n('cfg-bar-height').toFixed(3));
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
@@ -3205,6 +3333,9 @@ function _updateBarRatingRows() {
   const cur = vEl('cfg-bar-accent') || '';
   const visible = [...document.querySelectorAll('#cfg-bar-accent option')].filter(o => o.style.display !== 'none');
   if (visible.length && !visible.find(o => o.value === cur)) _setEl('cfg-bar-accent', visible[0].value);
+  // Match Notch Colour only applies to frosted-bodied styles.
+  document.getElementById('bar-match-notch-row').style.display =
+    (s === 'frosted' || s === 'rating_frosted') ? '' : 'none';
 }
 
 function updateRatingFields() {
@@ -3231,6 +3362,139 @@ const _INFO_TITLES = {
   badges:  'Quality Badges',
   weights: 'Rating Weights',
 };
+
+// ---------------------------------------------------------------------------
+// Preset system
+// ---------------------------------------------------------------------------
+// Each preset stores only the URL query params so it works with any server.
+// `loadPreset` calls importUrl with settingsOnly so the user's API keys,
+// domain, and currently selected title are preserved.
+
+const PRESETS = [
+  {
+    id: 'prestige_rating_bar',
+    name: 'Prestige Rating Bar',
+    description: 'Classic Posters+ design featuring a score bar using the prestige score palette, which uses grey, bronze and gold. Paired with the info sash and horizontal badge row.',
+    screenshot: '/static/presets/prestige_rating_bar.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=1&score_color_mode=2&accent_bar_font_size_ratio=0.080&accent_bar_y_offset=0.90&accent_bar_append_mode=0&accent_bar_bottom_ratio=0.040&score_glow_threshold=85&score_glow_blur=1&score_glow_alpha=40&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=false&muted=false&sash_length_ratio=1.15&sash_height_ratio=0.120&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=2&badge_height=32&badge_anchor_x=0.050&badge_anchor_y=0.045&badge_gap=8',
+  },
+  {
+    id: 'light_rating_bar',
+    name: 'Light Rating Bar',
+    description: 'Featuring a score bar using a light score palette of red, yellow, green and purple. Info is displayed as a frosted notch at the top of the poster.',
+    screenshot: '/static/presets/light_rating_bar.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=1&score_color_mode=0&accent_bar_font_size_ratio=0.080&accent_bar_y_offset=0.90&accent_bar_append_mode=0&accent_bar_bottom_ratio=0.040&score_glow_threshold=85&score_glow_blur=1&score_glow_alpha=40&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_inset=0.000&sash_badge_notch_offset=0.00&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+  {
+    id: 'clean_sash',
+    name: 'Clean Sash',
+    description: 'Genre and rating at the bottom in text, quality displayed as an age rating.',
+    screenshot: '/static/presets/clean_sash.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=2&numeric_score_font_size_ratio=0.100&numeric_score_y_offset=0.90&score_out_of_10=false&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=false&muted=false&sash_length_ratio=1.15&sash_height_ratio=0.120&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=1&badge_height=36&badge_anchor_x=0.050&badge_anchor_y=0.045',
+  },
+  {
+    id: 'clean_notch',
+    name: 'Clean Notch',
+    description: 'Genre and rating at the bottom in text, with a frosted notch at the top.',
+    screenshot: '/static/presets/clean_notch.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=2&numeric_score_font_size_ratio=0.100&numeric_score_y_offset=0.90&score_out_of_10=false&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_inset=0.000&sash_badge_notch_offset=0.00&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },  
+  {
+    id: 'mini',
+    name: 'Minimalist',
+    description: 'Very compact mode. The separator color conveys rating using the light palette. In the top left you can find a small notch that reflects the quality.',
+    screenshot: '/static/presets/mini.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=3&score_color_mode=0&minimalist_append_mode=0&minimalist_mode_font_size_ratio=0.056&minimalist_mode_font_x_offset=0.050&minimalist_mode_font_y_offset=0.920&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=false&muted=false&sash_length_ratio=1.15&sash_height_ratio=0.120&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=4&badge_height=20&badge_anchor_x=0.050&badge_anchor_y=0.045',
+  },
+  {
+    id: 'frosted_notch',
+    name: 'Frosted',
+    description: 'Both the bar and notch will reflect the poster\'s color, resulting in some beautifully colorful designs. Maintains a low footprint to show off as much of the art as possible.',
+    screenshot: '/static/presets/frosted_notch.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=4&bar_style=frosted&bar_append=rating_year&bar_score_out_of_10=false&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&bar_bottom_inset=0.007&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_inset=0.000&sash_badge_notch_offset=0.00&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+  {
+    id: 'black_rating_bar_light_notch',
+    name: 'Black Rating Bar',
+    description: 'A black bar displaying genre, rating and year with an adaptive rating bar that uses red, yellow, green and purple.',
+    screenshot: '/static/presets/black_rating_bar_light_notch.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=4&bar_style=rating_black&bar_accent=palette_0&bar_append=rating_year&bar_score_out_of_10=false&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&bar_bottom_inset=0.007&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_inset=0.000&sash_badge_notch_offset=0.00&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+  {
+    id: 'black_rating_bar_oa',
+    name: 'Black Rating Bar OA',
+    description: 'Black rating bar that swaps between red, yellow, green and purple based on score. Ideal preset if you enjoy the original art, rather than textless with a logo overlay. Uses very low vignette for maximum brightness.',
+    screenshot: '/static/presets/black_rating_bar_oa.jpg',
+    params: 'top_gradient=off&bottom_gradient=low&rating_display_mode=4&bar_style=rating_black&bar_accent=palette_0&bar_append=rating_year&bar_score_out_of_10=false&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&bar_bottom_inset=0.007&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=true&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=false&muted=false&sash_length_ratio=1.15&sash_height_ratio=0.120&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+  {
+    id: 'frosted_rating_bar_oa',
+    name: 'Frosted Rating Bar OA',
+    description: 'Frosted bar with a silver rating accent bar. Displays the genre, info sash and rating in one place while taking up the least amount of space. Uses the original art with very low vignette for maximum brightness.',
+    screenshot: '/static/presets/frosted_rating_bar_oa.jpg',
+    params: 'top_gradient=off&bottom_gradient=low&rating_display_mode=4&bar_style=rating_frosted&bar_accent=silver&bar_append=sash&bar_score_out_of_10=false&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&bar_bottom_inset=0.007&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=true&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=false&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+  {
+    id: 'mini_oa',
+    name: 'Minimalist OA',
+    description: 'Minimalist mode and sash allow maximum compatibility with busy original art posters. The separator color conveys the approximate rating.',
+    screenshot: '/static/presets/mini_oa.jpg',
+    params: 'top_gradient=medium&bottom_gradient=high&rating_display_mode=3&score_color_mode=0&minimalist_append_mode=0&minimalist_mode_font_size_ratio=0.056&minimalist_mode_font_x_offset=0.050&minimalist_mode_font_y_offset=0.920&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=true&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&sash_badge=false&muted=false&sash_length_ratio=1.15&sash_height_ratio=0.120&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2C-release_status&badge_display_mode=0',
+  },
+];
+
+function _buildPresetGrid() {
+  const grid = document.getElementById('preset-grid');
+  grid.innerHTML = '';
+  PRESETS.forEach(preset => {
+    const card = document.createElement('div');
+    card.className = 'preset-card';
+    card.ondblclick = () => loadPreset(preset.id);
+
+    const imgWrap = document.createElement('div');
+    if (preset.screenshot) {
+      const img = document.createElement('img');
+      img.className = 'preset-card-img';
+      img.alt = preset.name;
+      img.src = preset.screenshot;
+      img.onerror = () => {
+        imgWrap.innerHTML = `<div class="preset-card-img-placeholder">NO PREVIEW</div>`;
+      };
+      imgWrap.appendChild(img);
+    } else {
+      imgWrap.innerHTML = `<div class="preset-card-img-placeholder">NO PREVIEW</div>`;
+    }
+    card.appendChild(imgWrap);
+
+    const body = document.createElement('div');
+    body.className = 'preset-card-body';
+    body.innerHTML = `
+      <div class="preset-card-name">${preset.name}</div>
+      <div class="preset-card-desc">${preset.description}</div>
+    `;
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+}
+
+function openPresetModal() {
+  _buildPresetGrid();
+  document.getElementById('preset-modal').classList.add('open');
+}
+
+function closePresetModal() {
+  document.getElementById('preset-modal').classList.remove('open');
+}
+
+function loadPreset(id) {
+  const preset = PRESETS.find(p => p.id === id);
+  if (!preset) return;
+  const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
+  const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&imdb_id=%7Bimdb_id%7D&type=%7Btype%7D&${preset.params}`;
+  importUrl(url, { settingsOnly: true });
+  closePresetModal();
+  setLog('preview-log', `Preset "${preset.name}" loaded.`, 'ok');
+}
 
 function toggleImportBar() {
   document.getElementById('import-modal').classList.add('open');
@@ -3400,6 +3664,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
   if (p.has('bar_score_out_of_10'))   _setEl('tog-bar-score-10',  p.get('bar_score_out_of_10'));
+  if (p.has('bar_match_notch'))       _setEl('tog-bar-match-notch', p.get('bar_match_notch'));
   if (p.has('bar_height_ratio'))    _setEl('cfg-bar-height', p.get('bar_height_ratio'));
   if (p.has('bar_font_size_ratio')) _setEl('cfg-bar-font',   p.get('bar_font_size_ratio'));
   if (p.has('bar_frost_opacity'))   _setEl('cfg-bar-frost',  p.get('bar_frost_opacity'));
@@ -3421,6 +3686,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false } = {}) {
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
+  // Refresh field visibility for the restored mode BEFORE applying the saved
+  // values — updateBadgeModeHint resets cfg-badge-h to a mode default, so the
+  // explicit badge_height below must be applied after it to take precedence.
+  updateBadgeModeHint();
   if (p.has('badge_height'))       _setEl('cfg-badge-h',  p.get('badge_height'));
   if (p.has('badge_gap'))          _setEl('cfg-badge-gap', p.get('badge_gap'));
   if (p.has('badge_anchor_x'))     _setEl('cfg-badge-x',  p.get('badge_anchor_x'));
@@ -3599,6 +3868,16 @@ initCustomMobileSliders();
     .observe(document.getElementById(id), { childList: true, subtree: true });
 });
 </script>
+
+<div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
+  <div class="preset-modal-box">
+    <div class="preset-modal-header">
+      <span class="preset-modal-title">Load Preset</span>
+      <button class="preset-modal-close" onclick="closePresetModal()">✕</button>
+    </div>
+    <div class="preset-grid" id="preset-grid"></div>
+  </div>
+</div>
 
 <div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="import-modal-box">

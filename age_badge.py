@@ -158,6 +158,7 @@ def _make_text_layer(
     fill: tuple[int, int, int, int],
     *,
     blur: int = 0,
+    tracking: int = 0,
 ) -> tuple[Image.Image, tuple[int, int]]:
     """
     Render *text* on a tightly-sized RGBA layer (just the glyph bbox plus
@@ -166,26 +167,41 @@ def _make_text_layer(
     image to place the glyph in the same position it would occupy if drawn at
     ``xy`` on a full-canvas layer.
 
-    Why: the badge previously created a full 500×750 RGBA layer per pass and
-    blurred the whole thing.  The actual ink occupies maybe 60×60 pixels.
-    GaussianBlur cost is proportional to area, so rendering on the glyph bbox
-    cuts blur time roughly 30–50× per pass.  Five passes per badge → big win.
+    *tracking* adds that many pixels of extra spacing between every character
+    (letter-spacing) so multi-digit ratings like "17" don't look cramped.  The
+    glyphs are drawn one at a time when tracking is active; the top-left of the
+    first glyph stays anchored exactly where the non-tracked draw would place
+    it, so all five render passes line up.
+
+    Why the tight layer: the badge previously created a full 500×750 RGBA layer
+    per pass and blurred the whole thing.  The actual ink occupies maybe 60×60
+    pixels.  GaussianBlur cost is proportional to area, so rendering on the
+    glyph bbox cuts blur time roughly 30–50× per pass.
     """
     bb = _PROBE.textbbox((0, 0), text, font=font)
     # 3× sigma covers ~99% of a Gaussian — anything beyond that contributes
     # less than 1% intensity and is safely cropped at the layer edge.
     pad = blur * 3 if blur else 0
-    glyph_w = bb[2] - bb[0]
     glyph_h = bb[3] - bb[1]
-    layer_w = glyph_w + 2 * pad
-    layer_h = glyph_h + 2 * pad
 
-    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
-    # Draw so the glyph ink lands at (pad, pad)..(pad + glyph_w, pad + glyph_h)
-    ImageDraw.Draw(layer).text(
-        (pad - bb[0], pad - bb[1]),
-        text, font=font, fill=fill,
-    )
+    if tracking and len(text) > 1:
+        advances = [_PROBE.textlength(ch, font=font) for ch in text]
+        glyph_w  = int(sum(advances) + tracking * (len(text) - 1))
+        layer    = Image.new("RGBA", (glyph_w + 2 * pad, glyph_h + 2 * pad), (0, 0, 0, 0))
+        draw     = ImageDraw.Draw(layer)
+        cx       = float(pad - bb[0])
+        for ch, adv in zip(text, advances):
+            draw.text((cx, pad - bb[1]), ch, font=font, fill=fill)
+            cx += adv + tracking
+    else:
+        glyph_w = bb[2] - bb[0]
+        layer   = Image.new("RGBA", (glyph_w + 2 * pad, glyph_h + 2 * pad), (0, 0, 0, 0))
+        # Draw so the glyph ink lands at (pad, pad)..(pad + glyph_w, pad + glyph_h)
+        ImageDraw.Draw(layer).text(
+            (pad - bb[0], pad - bb[1]),
+            text, font=font, fill=fill,
+        )
+
     if blur:
         layer = layer.filter(ImageFilter.GaussianBlur(blur))
 
@@ -254,6 +270,9 @@ def draw_quality_age_badge(
     font_size = max(16, int(badge_height * 1.0))
     font      = _font(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"), font_size)
 
+    # Letter-spacing so multi-character ratings (e.g. "17") aren't cramped.
+    tracking = int(font_size * 0.10) if len(age_text) > 1 else 0
+
     ax = int(W * anchor_x_ratio)
     ay = int(H * anchor_y_ratio)
 
@@ -268,14 +287,14 @@ def draw_quality_age_badge(
     # that belongs to the numeral rather than the surface beneath it.
     glow_blur = max(font_size // 4, 8)
     glow_layer, glow_dest = _make_text_layer(
-        (tx, ty), age_text, font, colors["glow"], blur=glow_blur,
+        (tx, ty), age_text, font, colors["glow"], blur=glow_blur, tracking=tracking,
     )
     _composite_at(image, glow_layer, glow_dest)
 
     # Second, slightly tighter pass at higher opacity for a warm core to the glow
     glow_core_color = (*colors["glow"][:3], min(255, colors["glow"][3] + 40))
     core_layer, core_dest = _make_text_layer(
-        (tx, ty), age_text, font, glow_core_color, blur=glow_blur // 2,
+        (tx, ty), age_text, font, glow_core_color, blur=glow_blur // 2, tracking=tracking,
     )
     _composite_at(image, core_layer, core_dest)
 
@@ -284,13 +303,13 @@ def draw_quality_age_badge(
     shadow_blur   = max(2, font_size // 10)
     shadow_layer, shadow_dest = _make_text_layer(
         (tx + shadow_offset, ty + shadow_offset),
-        age_text, font, colors["shadow"], blur=shadow_blur,
+        age_text, font, colors["shadow"], blur=shadow_blur, tracking=tracking,
     )
     _composite_at(image, shadow_layer, shadow_dest)
 
     # ── 3. Primary numeral ────────────────────────────────────────────────
     primary_layer, primary_dest = _make_text_layer(
-        (tx, ty), age_text, font, colors["primary"],
+        (tx, ty), age_text, font, colors["primary"], tracking=tracking,
     )
     _composite_at(image, primary_layer, primary_dest)
 
@@ -302,7 +321,7 @@ def draw_quality_age_badge(
     hl_layer, hl_dest = _make_text_layer(
         (tx - hl_offset, ty - hl_offset),
         age_text, font, colors["highlight"],
-        blur=max(1, font_size // 30),
+        blur=max(1, font_size // 30), tracking=tracking,
     )
     _composite_at(image, hl_layer, hl_dest)
 
