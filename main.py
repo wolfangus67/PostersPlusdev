@@ -660,6 +660,116 @@ def _text_center(
     return x, y
 
 
+def _wrap_text_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> list[str]:
+    """Greedy word-wrap that keeps each line within *max_width* pixels."""
+    words = text.split()
+    if not words:
+        return []
+
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = " ".join(current + [word])
+        if draw.textlength(candidate, font=font) <= max_width or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
+def _draw_quality_watermark(
+    image: Image.Image,
+    text: str,
+    *,
+    anchor_x_ratio: float,
+    anchor_y_ratio: float,
+) -> None:
+    """Draw a subtle watermark-style note when no quality tokens are available."""
+    width, height = image.size
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    font_path = os.path.join(_FONTS_DIR, "Inter-Bold.ttf")
+    max_width = int(width * 0.52)
+    min_size = 12
+    max_size = max(min_size, int(height * 0.028))
+
+    font = ImageFont.load_default()
+    lines = [text]
+    font_size = min_size
+    for size in range(max_size, min_size - 1, -1):
+        try:
+            candidate_font = ImageFont.truetype(font_path, size)
+        except OSError:
+            break
+        candidate_lines = _wrap_text_to_width(draw, text, candidate_font, max_width)
+        if len(candidate_lines) <= 2 and max(draw.textlength(line, font=candidate_font) for line in candidate_lines) <= max_width:
+            font = candidate_font
+            lines = candidate_lines
+            font_size = size
+            break
+    else:
+        try:
+            font = ImageFont.truetype(font_path, min_size)
+            lines = _wrap_text_to_width(draw, text, font, max_width)
+        except OSError:
+            font = ImageFont.load_default()
+            lines = [text]
+
+    line_gap = max(1, int(font_size * 0.18))
+    joined = "\n".join(lines)
+    if hasattr(draw, "multiline_textbbox"):
+        block_bbox = draw.multiline_textbbox((0, 0), joined, font=font, spacing=line_gap, align="left")
+    else:
+        line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+        block_w = max((box[2] - box[0]) for box in line_boxes)
+        block_h = sum((box[3] - box[1]) for box in line_boxes) + line_gap * (len(lines) - 1)
+        block_bbox = (0, 0, block_w, block_h)
+    block_w = block_bbox[2] - block_bbox[0]
+    block_h = block_bbox[3] - block_bbox[1]
+    pad_x = max(10, int(font_size * 0.85))
+    pad_y = max(6, int(font_size * 0.55))
+
+    anchor_x = int(width * anchor_x_ratio)
+    anchor_y = int(height * anchor_y_ratio)
+    box_x = anchor_x
+    box_y = anchor_y
+    box_w = block_w + pad_x * 2
+    box_h = block_h + pad_y * 2
+
+    max_x = max(0, width - box_w - 12)
+    max_y = max(0, height - box_h - 12)
+    box_x = min(box_x, max_x)
+    box_y = min(box_y, max_y)
+
+    box = (box_x, box_y, box_x + box_w, box_y + box_h)
+    radius = max(10, int(font_size * 0.9))
+    draw.rounded_rectangle(box, radius=radius, fill=(0, 0, 0, 90), outline=(255, 255, 255, 36), width=1)
+
+    tx = box_x + pad_x - block_bbox[0]
+    ty = box_y + pad_y - block_bbox[1]
+    draw.multiline_text(
+        (tx, ty),
+        joined,
+        font=font,
+        fill=(255, 255, 255, 150),
+        spacing=line_gap,
+        align="left",
+        stroke_width=max(1, font_size // 10),
+        stroke_fill=(0, 0, 0, 110),
+    )
+    image.alpha_composite(overlay)
+
+
 # ---------------------------------------------------------------------------
 # Poster composition
 # ---------------------------------------------------------------------------
@@ -777,6 +887,7 @@ def build_poster(
     fallback_title: str | None = None,
     discovery_meta: DiscoveryMeta | None = None,
     quality_tokens: list[str] | None = None,
+    quality_pending: bool = False,
     release_year: str | None = None,
     age_rating: int | None = None,
     no_poster: bool = False,
@@ -907,6 +1018,16 @@ def build_poster(
                 x_start=bx, y_top=by,
                 badge_height=cfg.badge_height,
                 badge_gap=cfg.badge_gap,
+            )
+        elif not quality_pending and not tokens:
+            _draw_quality_watermark(
+                image,
+                translate_sash(
+                    "Digital release not confirmed, may not be available yet",
+                    cfg.logo_language,
+                ),
+                anchor_x_ratio=cfg.badge_anchor_x,
+                anchor_y_ratio=cfg.badge_anchor_y,
             )
 
     # --- Logo / fallback title ---
@@ -2546,6 +2667,7 @@ async def get_poster(
             ),
             discovery_meta=discovery_meta,
             quality_tokens=quality_tokens,
+            quality_pending=quality_pending,
             release_year=release_year,
             age_rating=age_rating,
             no_poster=is_no_poster,
